@@ -3,21 +3,23 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Tally Ledger — Live Entity Dashboard</title>
+<title>Ledger Zenith — Live Entity Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <div id="offline-banner" class="offline-banner hidden" role="status">
+  <span class="offline-dot"></span>
   Tally offline — showing data as of <span id="offline-since">—</span>
 </div>
 
 <header class="ledger-header">
   <div class="brand">
-    <span class="brand-mark">TALLY</span><span class="brand-sub">LEDGER</span>
+    <span class="brand-mark">Ledger Zenith</span>
+    <span class="brand-sub">Precision in every entry. Confidence in every balance.</span>
   </div>
   <div class="header-right">
     <div class="sync-status" id="sync-status">
@@ -84,8 +86,8 @@
     </section>
 
     <aside class="margin-notes" aria-label="Recent changes">
-      <h2>Margin Notes</h2>
-      <p class="margin-sub">Recent changes, newest first</p>
+      <h2>Recent Activity</h2>
+      <p class="margin-sub">Newest changes first</p>
       <ul id="changes-list" class="changes-list">
         <li class="empty-row">Loading…</li>
       </ul>
