@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tally Ledger — Live Entity Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="offline-banner" class="offline-banner hidden" role="status">
+  Tally offline — showing data as of <span id="offline-since">—</span>
+</div>
+
+<header class="ledger-header">
+  <div class="brand">
+    <span class="brand-mark">TALLY</span><span class="brand-sub">LEDGER</span>
+  </div>
+  <div class="header-right">
+    <div class="sync-status" id="sync-status">
+      <span class="sync-dot" id="sync-dot"></span>
+      <span id="sync-text">Connecting…</span>
+    </div>
+    <button id="refresh-btn" class="btn-refresh" type="button">
+      <span id="refresh-label">Refresh now</span>
+    </button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <section class="overview" id="overview-tiles" aria-label="Overview">
+    <div class="tile">
+      <div class="tile-label">Total Receivables</div>
+      <div class="tile-value debit" id="tile-receivables">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Total Payables</div>
+      <div class="tile-value credit" id="tile-payables">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Net Position</div>
+      <div class="tile-value" id="tile-net">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Overdue Entities</div>
+      <div class="tile-value" id="tile-overdue">—</div>
+    </div>
+  </section>
+
+  <div class="content-grid">
+    <section class="panel entities-panel">
+      <div class="panel-header">
+        <h2>Entities</h2>
+        <div class="panel-controls">
+          <div class="seg" id="type-filter" role="tablist" aria-label="Entity type">
+            <button class="seg-btn active" data-type="">All</button>
+            <button class="seg-btn" data-type="customer">Customers</button>
+            <button class="seg-btn" data-type="vendor">Vendors</button>
+          </div>
+          <input id="entity-search" type="search" placeholder="Search ledger…" />
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="entities-table">
+          <thead>
+            <tr>
+              <th data-sort="name">Name</th>
+              <th data-sort="type">Type</th>
+              <th data-sort="balance" class="num">Balance</th>
+              <th class="num">Open Bills</th>
+              <th class="num">Overdue Bills</th>
+              <th>Last Changed</th>
+            </tr>
+          </thead>
+          <tbody id="entities-tbody">
+            <tr class="empty-row"><td colspan="6">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="margin-notes" aria-label="Recent changes">
+      <h2>Margin Notes</h2>
+      <p class="margin-sub">Recent changes, newest first</p>
+      <ul id="changes-list" class="changes-list">
+        <li class="empty-row">Loading…</li>
+      </ul>
+    </aside>
+  </div>
+
+  <section class="panel stock-panel">
+    <div class="panel-header">
+      <h2>Stock</h2>
+      <label class="toggle">
+        <input type="checkbox" id="low-stock-toggle" />
+        <span>Low stock only</span>
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table id="stock-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="num">Qty</th>
+            <th>Unit</th>
+            <th class="num">Value</th>
+          </tr>
+        </thead>
+        <tbody id="stock-tbody">
+          <tr class="empty-row"><td colspan="4">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<div id="entity-detail-overlay" class="detail-overlay hidden">
+  <div class="detail-scrim" id="detail-scrim"></div>
+  <aside class="detail-panel" role="dialog" aria-modal="true" aria-label="Entity detail">
+    <button class="detail-close" id="detail-close" type="button" aria-label="Close">×</button>
+    <div class="detail-head">
+      <div class="detail-name" id="detail-name">—</div>
+      <div class="detail-balance" id="detail-balance">—</div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Bills</h3>
+      <div class="table-wrap">
+        <table id="detail-bills-table">
+          <thead>
+            <tr><th>Ref</th><th>Date</th><th>Due</th><th class="num">Outstanding</th><th>Status</th></tr>
+          </thead>
+          <tbody id="detail-bills-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Balance History</h3>
+      <canvas id="detail-chart" height="120"></canvas>
+    </div>
+
+    <div class="detail-section">
+      <h3>Followups</h3>
+      <ul id="detail-followups" class="followups-list"></ul>
+      <form id="followup-form" class="followup-form">
+        <textarea id="followup-note" placeholder="Called, promised payment by Friday…" required></textarea>
+        <div class="followup-row">
+          <select id="followup-status">
+            <option value="pending">Pending</option>
+            <option value="contacted">Contacted</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <button type="submit">Add note</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

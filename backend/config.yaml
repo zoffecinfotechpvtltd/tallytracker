@@ -1,0 +1,17 @@
+tally:
+  host: localhost
+  port: 9000
+  company_name: "Your Company Name"
+
+polling:
+  interval_minutes: 5
+
+alerts:
+  enabled: false   # pull-only by default - open the dashboard to see changes.
+                    # flip true once you wire an actual push channel (email/WhatsApp) in notifier.py
+
+stock:
+  low_stock_threshold: 10
+
+database:
+  path: "./tally.db"

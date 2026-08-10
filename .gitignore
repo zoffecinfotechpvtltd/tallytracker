@@ -1,0 +1,6 @@
+backend/tally.db
+backend/__pycache__/
+backend/*.pyc
+backend/test_phase*.db
+backend/*.log
+.venv/
