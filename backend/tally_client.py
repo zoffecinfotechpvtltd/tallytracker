@@ -89,10 +89,30 @@ def _post(xml_body: str, timeout_s: float = 10.0) -> str:
     return raw
 
 
+_XML_ILLEGAL_CODEPOINTS = {0xB, 0xC, 0xFFFE, 0xFFFF}
+
+
+def _is_xml_illegal_codepoint(cp: int) -> bool:
+    return (
+        cp in _XML_ILLEGAL_CODEPOINTS
+        or (0x0 <= cp <= 0x8) or (0xE <= cp <= 0x1F)
+        or (0xD800 <= cp <= 0xDFFF)
+    )
+
+
+def _strip_illegal_numeric_refs(match: "re.Match[str]") -> str:
+    cp = int(match.group(1), 16) if match.group(1) else int(match.group(2))
+    return "" if _is_xml_illegal_codepoint(cp) else match.group(0)
+
+
 def _parse_xml(raw: str) -> ET.Element:
-    # Tally sometimes emits invalid XML control characters and an unescaped '&' in names.
+    # Tally sometimes emits invalid XML control characters - as raw bytes AND as
+    # escaped numeric character references (e.g. "&#4;") inside ledger/item names.
+    # XML 1.0 forbids both forms for these codepoints; ET rejects the whole
+    # document if even one slips through, so both must be scrubbed.
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
-    cleaned = re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)", "&amp;", cleaned)
+    cleaned = re.sub(r"&#x([0-9A-Fa-f]+);|&#(\d+);", _strip_illegal_numeric_refs, cleaned)
+    cleaned = re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9A-Fa-f]+;)", "&amp;", cleaned)
     try:
         return ET.fromstring(cleaned)
     except ET.ParseError as e:
