@@ -127,8 +127,12 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
                 f"stock={len(raw_stock)} company={settings.tally.company_name!r}",
                 flush=True,
             )
-        except tally_client.TallyUnreachableError as e:
-            print(f"[poller] {poll_ts} TallyUnreachableError: {e}", flush=True)
+        except Exception as e:
+            # Broad on purpose: this boundary talks to an external app (Tally) we
+            # don't control. Anything going wrong here should degrade to "mark
+            # unreachable, log it, try again next cycle" - never a raw 500 to
+            # /api/refresh's caller or a dead background loop.
+            print(f"[poller] {poll_ts} fetch failed ({type(e).__name__}): {e}", flush=True)
             snap = db.create_snapshot(conn, tally_reachable=False, taken_at=poll_ts)
             conn.commit()
             return {
