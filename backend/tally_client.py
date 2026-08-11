@@ -209,19 +209,17 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
         system_filter = f"<SYSTEM TYPE=\"Formulae\" NAME=\"TallyTrackerFilter\">{filter_expr}</SYSTEM>"
     return f"""<ENVELOPE>
  <HEADER>
-  <TALLYREQUEST>Export Data</TALLYREQUEST>
+  <VERSION>1</VERSION>
+  <TALLYREQUEST>Export</TALLYREQUEST>
+  <TYPE>Collection</TYPE>
+  <ID>{collection_name}</ID>
  </HEADER>
  <BODY>
-  <EXPORTDATA>
-   <REQUESTDESC>
-    <REPORTNAME>{collection_name}</REPORTNAME>
-    <STATICVARIABLES>
-     <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-     {_current_company_tag()}
-    </STATICVARIABLES>
-   </REQUESTDESC>
-  </EXPORTDATA>
   <DESC>
+   <STATICVARIABLES>
+    <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+    {_current_company_tag()}
+   </STATICVARIABLES>
    <TDL>
     <TDLMESSAGE>
      <COLLECTION NAME="{collection_name}" ISMODIFY="No">
