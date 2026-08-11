@@ -97,7 +97,14 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
             raw_bills_r = tally_client.fetch_bills_receivable()
             raw_bills_p = tally_client.fetch_bills_payable()
             raw_stock = tally_client.fetch_stock_summary()
-        except tally_client.TallyUnreachableError:
+            print(
+                f"[poller] {poll_ts} fetched: trial_balance={len(raw_tb)} "
+                f"bills_receivable={len(raw_bills_r)} bills_payable={len(raw_bills_p)} "
+                f"stock={len(raw_stock)} company={settings.tally.company_name!r}",
+                flush=True,
+            )
+        except tally_client.TallyUnreachableError as e:
+            print(f"[poller] {poll_ts} TallyUnreachableError: {e}", flush=True)
             snap = db.create_snapshot(conn, tally_reachable=False, taken_at=poll_ts)
             conn.commit()
             return {
