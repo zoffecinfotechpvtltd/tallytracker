@@ -242,7 +242,7 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
    </STATICVARIABLES>
    <TDL>
     <TDLMESSAGE>
-     <COLLECTION NAME="{collection_name}" ISMODIFY="No">
+     <COLLECTION NAME="{collection_name}" ISMODIFY="Yes">
       <TYPE>{obj_type}</TYPE>
       {filter_block}
       {fetch_tag}
