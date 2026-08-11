@@ -418,26 +418,36 @@ def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100, lookback_days:
     newest first: [{ "date": date|None, "voucher_type": str, "voucher_number": str,
     "amount": float, "narration": str }, ...].
 
-    Confirmed against real Tally data, two separate bugs:
+    Confirmed against real Tally data, three separate bugs:
     1. AMOUNT is NOT a top-level Voucher field - only exposed per leg, inside
-       each ALLLEDGERENTRIES.LIST entry (Tally ignores the FETCH field list for
-       vouchers entirely, always returns the full native object regardless).
-       Fixed by reading the amount from whichever ALLLEDGERENTRIES.LIST entry's
-       LEDGERNAME matches the ledger being viewed.
+       each ALLLEDGERENTRIES.LIST entry. Fixed by reading the amount from
+       whichever entry's LEDGERNAME matches the ledger being viewed.
     2. $PartyLedgerName filtering (which worked for a Payment voucher) came back
        completely empty for a salary ledger with a real, non-zero balance -
        "party" is an invoice-style concept (Payment/Receipt/Sales/Purchase) that
        Journal vouchers (how things like salary provisioning post) don't have,
        so that filter silently excludes entire voucher types. Replaced with a
-       date-range scope (no party filter at all) plus the same client-side
+       date-range scope (no party filter at all) plus the client-side
        ledger-entry match already used for the amount, which catches every
-       voucher type since it just inspects the real line items."""
+       voucher type since it just inspects the real line items.
+    3. Whether Tally includes ALLLEDGERENTRIES.LIST at all depends on the
+       query shape, not a fixed rule: a request matching one specific voucher
+       returned the full native object (every native sub-list) regardless of
+       the requested FETCH fields, but a broad date-range scan matching many
+       vouchers returned a lean summary form with ALLLEDGERENTRIES.LIST
+       omitted entirely - same as the ad-hoc dotted-path trick already used in
+       _fetch_bills() (BILLALLOCATIONS.NAME etc.), explicitly FETCHing
+       ALLLEDGERENTRIES.LEDGERNAME / ALLLEDGERENTRIES.AMOUNT forces Tally to
+       include that sub-list even in the broad scan."""
     from_date = (date.today() - timedelta(days=lookback_days)).strftime("%Y%m%d")
     to_date = date.today().strftime("%Y%m%d")
     date_range_vars = f'<SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE><SVTODATE TYPE="Date">{to_date}</SVTODATE>'
     req = _adhoc_collection_request(
         "TTVouchersX2", "Voucher",
-        ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "NARRATION"],
+        [
+            "DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "NARRATION",
+            "ALLLEDGERENTRIES.LEDGERNAME", "ALLLEDGERENTRIES.AMOUNT",
+        ],
         extra_static_vars=date_range_vars,
     )
 
