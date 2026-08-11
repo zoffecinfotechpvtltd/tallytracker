@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from datetime import date
 from typing import Optional
 
@@ -18,6 +19,32 @@ import tally_client
 from config import settings
 
 _sync_lock = threading.Lock()
+
+_EMPTY_RESULT_MAX_ATTEMPTS = 4
+_EMPTY_RESULT_RETRY_DELAY_S = 3.0
+
+
+def _fetch_all(poll_ts: str) -> tuple[list, list, list, list]:
+    """Tally's ad-hoc XML export is intermittently flaky on some installs - the
+    exact same request can come back with a full ledger list one moment and an
+    empty (but well-formed, no error) collection the next, with no discernible
+    trigger. A real trial balance being empty is implausible for a live
+    company, so treat an all-empty trial balance as a signal to retry rather
+    than as a true result."""
+    for attempt in range(1, _EMPTY_RESULT_MAX_ATTEMPTS + 1):
+        raw_tb = tally_client.fetch_trial_balance()
+        raw_bills_r = tally_client.fetch_bills_receivable()
+        raw_bills_p = tally_client.fetch_bills_payable()
+        raw_stock = tally_client.fetch_stock_summary()
+        if raw_tb or attempt == _EMPTY_RESULT_MAX_ATTEMPTS:
+            if attempt > 1:
+                print(f"[poller] {poll_ts} recovered on attempt {attempt}" if raw_tb
+                      else f"[poller] {poll_ts} still empty after {attempt} attempts, giving up this cycle",
+                      flush=True)
+            return raw_tb, raw_bills_r, raw_bills_p, raw_stock
+        print(f"[poller] {poll_ts} attempt {attempt} came back empty, retrying...", flush=True)
+        time.sleep(_EMPTY_RESULT_RETRY_DELAY_S)
+    raise AssertionError("unreachable")
 
 
 def _iso_or_none(d: Optional[date]) -> Optional[str]:
@@ -93,10 +120,7 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
             }
 
         try:
-            raw_tb = tally_client.fetch_trial_balance()
-            raw_bills_r = tally_client.fetch_bills_receivable()
-            raw_bills_p = tally_client.fetch_bills_payable()
-            raw_stock = tally_client.fetch_stock_summary()
+            raw_tb, raw_bills_r, raw_bills_p, raw_stock = _fetch_all(poll_ts)
             print(
                 f"[poller] {poll_ts} fetched: trial_balance={len(raw_tb)} "
                 f"bills_receivable={len(raw_bills_r)} bills_payable={len(raw_bills_p)} "
