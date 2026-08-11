@@ -148,6 +148,19 @@ def _text(elem: Optional[ET.Element]) -> Optional[str]:
     return t if t else None
 
 
+def _object_name(elem: ET.Element) -> Optional[str]:
+    """Tally represents an object's own name two different ways depending on
+    object type: as the NAME="..." attribute on the element itself (LEDGER,
+    STOCKITEM), or as a child <NAME> element (COMPANY). elem.find("NAME") only
+    ever sees the child-element form, so it silently returns None - and every
+    caller here treats "no name" as "skip this record" - for LEDGER/STOCKITEM,
+    which never emit the child form. Try the attribute first."""
+    attr = elem.get("NAME")
+    if attr and attr.strip():
+        return attr.strip()
+    return _text(elem.find("NAME"))
+
+
 def _first_text(parent: ET.Element, *tags: str) -> Optional[str]:
     for tag in tags:
         found = parent.find(tag)
@@ -235,7 +248,7 @@ def fetch_company_list() -> list[str]:
     root = _parse_xml(raw)
     names: list[str] = []
     for company in root.iter("COMPANY"):
-        name = _text(company.find("NAME"))
+        name = _object_name(company)
         if name:
             names.append(name)
     return names
@@ -287,7 +300,7 @@ def fetch_trial_balance() -> list[dict]:
 
     results: list[dict] = []
     for led in root.iter("LEDGER"):
-        name = _text(led.find("NAME"))
+        name = _object_name(led)
         if not name:
             continue
         signed = _parse_amount(_text(led.find("CLOSINGBALANCE")))
@@ -318,10 +331,12 @@ def _fetch_bills(group_name: str) -> list[dict]:
 
     results: list[dict] = []
     for led in root.iter("LEDGER"):
-        ledger_name = _text(led.find("NAME"))
+        ledger_name = _object_name(led)
         if not ledger_name:
             continue
         for bill in led.findall("BILLALLOCATIONS.LIST"):
+            if len(bill) == 0:
+                continue  # Tally emits an empty wrapper for ledgers with no open bills
             bill_ref = _first_text(bill, "NAME")
             bill_date, due_date = _extract_bill_dates(bill)
             original = _parse_amount(_first_text(bill, "OPENINGBALANCE"))
@@ -377,7 +392,7 @@ def fetch_stock_summary() -> list[dict]:
 
     results: list[dict] = []
     for item in root.iter("STOCKITEM"):
-        name = _text(item.find("NAME"))
+        name = _object_name(item)
         if not name:
             continue
         qty_raw = _text(item.find("CLOSINGBALANCE")) or ""
