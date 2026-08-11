@@ -121,6 +121,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   outline-offset: 2px;
 }
 
+
 /* ---------- Offline banner ---------- */
 
 .offline-banner {
@@ -161,6 +162,48 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 .tile-value { font-family: var(--font-mono); font-size: 27px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
 .tile-value.debit { color: var(--sage); }
 .tile-value.credit { color: var(--copper); }
+
+/* ---------- Tabs ---------- */
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  margin-bottom: 20px;
+  width: fit-content;
+}
+.tab-btn {
+  border: none; background: transparent; cursor: pointer;
+  padding: 10px 22px;
+  font-size: 13.5px; font-weight: 600; color: var(--ink-soft);
+  border-radius: calc(var(--radius-md) - 4px);
+  transition: background 0.15s, color 0.15s;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+
+.tab-panel.hidden { display: none; }
+
+.full-width { width: 100%; position: static; max-height: none; }
+
+/* ---------- Pager ---------- */
+
+.pager {
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  padding: 16px 26px;
+  border-top: 1px solid var(--border);
+}
+.pager-btn {
+  border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--ink); padding: 7px 16px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+}
+.pager-btn:hover:not(:disabled) { background: var(--surface-2); }
+.pager-btn:disabled { opacity: 0.4; cursor: default; }
+.pager-info { font-size: 12.5px; color: var(--ink-faint); font-family: var(--font-mono); }
 
 .content-grid {
   display: grid;
@@ -237,6 +280,14 @@ thead th.sorted::after { content: " \25be"; font-size: 9px; }
 thead th.sorted.asc::after { content: " \25b4"; }
 
 tbody td { padding: 14px 26px; border-bottom: 1px solid var(--border); font-size: 13.5px; white-space: nowrap; }
+tbody td.truncate {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 860px) {
+  tbody td.truncate { max-width: 160px; }
+}
 tbody tr:last-child td { border-bottom: none; }
 tbody tr { cursor: default; transition: background 0.12s; }
 tbody tr.clickable { cursor: pointer; }

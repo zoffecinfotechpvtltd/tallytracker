@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 import db
 import poller
+import tally_client
 from config import settings
 
 _conn_lock = threading.Lock()
@@ -73,12 +74,21 @@ def latest_sync_status(conn: sqlite3.Connection) -> tuple[bool, Optional[str]]:
     return bool(row["tally_reachable"]), row["taken_at"]
 
 
-def envelope(conn: sqlite3.Connection, data) -> dict:
+def envelope(conn: sqlite3.Connection, data, **extra) -> dict:
     reachable, last_synced_at = latest_sync_status(conn)
-    return {
+    result = {
         "tally_reachable": reachable, "last_synced_at": last_synced_at,
         "company_name": settings.tally.company_name, "data": data,
     }
+    result.update(extra)
+    return result
+
+
+def _paginate(items: list, page: int, page_size: int) -> tuple[list, int]:
+    page = max(page, 1)
+    page_size = max(page_size, 1)
+    start = (page - 1) * page_size
+    return items[start:start + page_size], len(items)
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +130,8 @@ def get_entities(
     search: Optional[str] = None,
     sort: Optional[str] = "name_asc",
     overdue_only: bool = False,
+    page: int = 1,
+    page_size: int = 50,
 ):
     conn = get_conn()
     with _conn_lock:
@@ -155,7 +167,8 @@ def get_entities(
         else:  # name_asc default
             items.sort(key=lambda i: (i["name"] or "").lower())
 
-        return envelope(conn, items)
+        page_items, total = _paginate(items, page, page_size)
+        return envelope(conn, page_items, total=total, page=page, page_size=page_size)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +218,38 @@ def get_entity_detail(entity_id: int):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/entities/{id}/vouchers - live from Tally, not synced/stored, so the
+# 5-minute poll stays fast and we don't accumulate years of transaction history
+# for entities nobody looks at.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/entities/{entity_id}/vouchers")
+def get_entity_vouchers(entity_id: int):
+    conn = get_conn()
+    with _conn_lock:
+        entity = db.get_entity(conn, entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        ledger_name = entity["tally_ledger_name"]
+
+    try:
+        vouchers = tally_client.fetch_vouchers_for_ledger(ledger_name)
+        reachable = True
+    except tally_client.TallyUnreachableError:
+        vouchers = []
+        reachable = False
+
+    data = [{
+        "date": v["date"].isoformat() if v["date"] else None,
+        "voucher_type": v["voucher_type"],
+        "voucher_number": v["voucher_number"],
+        "amount": v["amount"],
+        "narration": v["narration"],
+    } for v in vouchers]
+    return {"tally_reachable": reachable, "data": data}
+
+
+# ---------------------------------------------------------------------------
 # POST /api/entities/{id}/followup
 # ---------------------------------------------------------------------------
 
@@ -230,7 +275,7 @@ def post_followup(entity_id: int, body: FollowupIn):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stock")
-def get_stock(low_stock_only: bool = False):
+def get_stock(low_stock_only: bool = False, page: int = 1, page_size: int = 50):
     conn = get_conn()
     with _conn_lock:
         threshold = settings.stock.low_stock_threshold
@@ -241,7 +286,8 @@ def get_stock(low_stock_only: bool = False):
         } for r in rows]
         if low_stock_only:
             items = [i for i in items if i["low_stock"]]
-        return envelope(conn, items)
+        page_items, total = _paginate(items, page, page_size)
+        return envelope(conn, page_items, total=total, page=page, page_size=page_size)
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ledger Zenith — Live Entity Dashboard</title>
+<title>Zoffec Tally Ledger — Live Entity Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -18,7 +18,7 @@
 
 <header class="ledger-header">
   <div class="brand">
-    <span class="brand-mark">Ledger Zenith</span>
+    <span class="brand-mark">Zoffec Tally Ledger</span>
     <span class="brand-sub" id="company-name">Precision in every entry. Confidence in every balance.</span>
   </div>
   <div class="header-right">
@@ -53,15 +53,21 @@
     </div>
   </section>
 
-  <div class="content-grid">
+  <nav class="tab-bar" id="tab-bar" role="tablist" aria-label="Sections">
+    <button class="tab-btn active" type="button" data-tab="entities" role="tab" aria-selected="true">Entities</button>
+    <button class="tab-btn" type="button" data-tab="stock" role="tab" aria-selected="false">Stock</button>
+    <button class="tab-btn" type="button" data-tab="activity" role="tab" aria-selected="false">Activity</button>
+  </nav>
+
+  <section class="tab-panel" id="tab-entities" data-tab-panel="entities">
     <section class="panel entities-panel">
       <div class="panel-header">
         <h2>Entities</h2>
         <div class="panel-controls">
           <div class="seg" id="type-filter" role="tablist" aria-label="Entity type">
-            <button class="seg-btn active" data-type="">All</button>
-            <button class="seg-btn" data-type="customer">Customers</button>
-            <button class="seg-btn" data-type="vendor">Vendors</button>
+            <button class="seg-btn active" type="button" data-type="" role="tab" aria-selected="true">All</button>
+            <button class="seg-btn" type="button" data-type="customer" role="tab" aria-selected="false">Customers</button>
+            <button class="seg-btn" type="button" data-type="vendor" role="tab" aria-selected="false">Vendors</button>
           </div>
           <input id="entity-search" type="search" placeholder="Search ledger…" />
         </div>
@@ -83,40 +89,54 @@
           </tbody>
         </table>
       </div>
+      <div class="pager" id="entities-pager">
+        <button class="pager-btn" type="button" data-action="prev" disabled>&#8249; Prev</button>
+        <span class="pager-info" id="entities-pager-info">Page 1 of 1</span>
+        <button class="pager-btn" type="button" data-action="next" disabled>Next &#8250;</button>
+      </div>
     </section>
+  </section>
 
-    <aside class="margin-notes" aria-label="Recent changes">
+  <section class="tab-panel hidden" id="tab-stock" data-tab-panel="stock">
+    <section class="panel stock-panel">
+      <div class="panel-header">
+        <h2>Stock</h2>
+        <label class="toggle">
+          <input type="checkbox" id="low-stock-toggle" />
+          <span>Low stock only</span>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table id="stock-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th>Unit</th>
+              <th class="num">Value</th>
+            </tr>
+          </thead>
+          <tbody id="stock-tbody">
+            <tr class="empty-row"><td colspan="4">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager" id="stock-pager">
+        <button class="pager-btn" type="button" data-action="prev" disabled>&#8249; Prev</button>
+        <span class="pager-info" id="stock-pager-info">Page 1 of 1</span>
+        <button class="pager-btn" type="button" data-action="next" disabled>Next &#8250;</button>
+      </div>
+    </section>
+  </section>
+
+  <section class="tab-panel hidden" id="tab-activity" data-tab-panel="activity">
+    <aside class="margin-notes full-width" aria-label="Recent changes">
       <h2>Recent Activity</h2>
       <p class="margin-sub">Newest changes first</p>
       <ul id="changes-list" class="changes-list">
         <li class="empty-row">Loading…</li>
       </ul>
     </aside>
-  </div>
-
-  <section class="panel stock-panel">
-    <div class="panel-header">
-      <h2>Stock</h2>
-      <label class="toggle">
-        <input type="checkbox" id="low-stock-toggle" />
-        <span>Low stock only</span>
-      </label>
-    </div>
-    <div class="table-wrap">
-      <table id="stock-table">
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th class="num">Qty</th>
-            <th>Unit</th>
-            <th class="num">Value</th>
-          </tr>
-        </thead>
-        <tbody id="stock-tbody">
-          <tr class="empty-row"><td colspan="4">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
   </section>
 
 </main>
@@ -143,6 +163,20 @@
     </div>
 
     <div class="detail-section">
+      <h3>Transactions</h3>
+      <div class="table-wrap">
+        <table id="detail-vouchers-table">
+          <thead>
+            <tr><th>Date</th><th>Type</th><th>No.</th><th class="num">Amount</th><th>Narration</th></tr>
+          </thead>
+          <tbody id="detail-vouchers-tbody">
+            <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="detail-section">
       <h3>Balance History</h3>
       <canvas id="detail-chart" height="120"></canvas>
     </div>
@@ -153,11 +187,11 @@
       <form id="followup-form" class="followup-form">
         <textarea id="followup-note" placeholder="Called, promised payment by Friday…" required></textarea>
         <div class="followup-row">
-          <select id="followup-status">
-            <option value="pending">Pending</option>
-            <option value="contacted">Contacted</option>
-            <option value="resolved">Resolved</option>
-          </select>
+          <div class="seg" id="followup-status-seg" role="tablist" aria-label="Followup status">
+            <button type="button" class="seg-btn active" data-status="pending" role="tab" aria-selected="true">Pending</button>
+            <button type="button" class="seg-btn" data-status="contacted" role="tab" aria-selected="false">Contacted</button>
+            <button type="button" class="seg-btn" data-status="resolved" role="tab" aria-selected="false">Resolved</button>
+          </div>
           <button type="submit">Add note</button>
         </div>
       </form>

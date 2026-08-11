@@ -3,15 +3,22 @@
 
   const API = "";
   const POLL_MS = 30000;
+  const PAGE_SIZE = 50;
 
   const state = {
     entities: [],
+    entitiesPage: { page: 1, pageSize: PAGE_SIZE, total: 0 },
     stock: [],
+    stockPage: { page: 1, pageSize: PAGE_SIZE, total: 0 },
     typeFilter: "",
     search: "",
     sort: { column: "name", dir: "asc" },
     lowStockOnly: false,
     detailChart: null,
+    activeTab: "entities",
+    overviewData: null,
+    followupStatus: "pending",
+    openEntityId: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -30,6 +37,14 @@
     if (hours < 24) return `${hours}h ago`;
     const days = Math.round(hours / 24);
     return `${days}d ago`;
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
   }
 
   async function fetchJSON(url, opts) {
@@ -62,12 +77,24 @@
     }
   }
 
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
   // ---------------- Overview ----------------
 
   async function loadOverview() {
     const envelope = await fetchJSON("/api/overview");
     applySyncEnvelope(envelope);
-    const d = envelope.data;
+    state.overviewData = envelope.data;
+    renderOverviewTiles();
+  }
+
+  function renderOverviewTiles() {
+    const d = state.overviewData;
+    if (!d) return;
     $("#tile-receivables").textContent = fmtMoney(d.total_receivables);
     $("#tile-payables").textContent = fmtMoney(d.total_payables);
     const net = $("#tile-net");
@@ -81,43 +108,31 @@
   async function loadEntities() {
     const params = new URLSearchParams();
     if (state.typeFilter) params.set("type", state.typeFilter);
+    if (state.search) params.set("search", state.search);
+    params.set("sort", state.sort.column === "balance" ? "balance_desc" : "name_asc");
+    params.set("page", String(state.entitiesPage.page));
+    params.set("page_size", String(state.entitiesPage.pageSize));
     const envelope = await fetchJSON("/api/entities?" + params.toString());
     applySyncEnvelope(envelope);
     state.entities = envelope.data;
+    state.entitiesPage.total = envelope.total ?? envelope.data.length;
     renderEntities();
+    renderPager("entities", state.entitiesPage);
   }
 
   function renderEntities() {
-    let rows = state.entities.slice();
-
-    if (state.search) {
-      const q = state.search.toLowerCase();
-      rows = rows.filter((r) => (r.name || "").toLowerCase().includes(q));
-    }
-
-    const { column, dir } = state.sort;
-    rows.sort((a, b) => {
-      let av, bv;
-      if (column === "balance") { av = a.current_balance || 0; bv = b.current_balance || 0; }
-      else { av = (a[column] || "").toString().toLowerCase(); bv = (b[column] || "").toString().toLowerCase(); }
-      if (av < bv) return dir === "asc" ? -1 : 1;
-      if (av > bv) return dir === "asc" ? 1 : -1;
-      return 0;
-    });
-
     const tbody = $("#entities-tbody");
     tbody.innerHTML = "";
-    if (rows.length === 0) {
+    if (state.entities.length === 0) {
       tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No entities match.</td></tr>`;
       return;
     }
-
-    for (const r of rows) {
+    for (const r of state.entities) {
       const tr = document.createElement("tr");
       tr.className = "clickable" + (r.overdue_bill_count > 0 ? " row-overdue" : "");
       tr.dataset.id = r.id;
       tr.innerHTML = `
-        <td>${escapeHtml(r.name)}</td>
+        <td class="truncate" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</td>
         <td>${r.type ? escapeHtml(r.type) : "—"}</td>
         <td class="num">${fmtMoney(r.current_balance)} <span class="pill ${r.balance_type === "Cr" ? "cr" : "dr"}">${r.balance_type || "-"}</span></td>
         <td class="num">${r.open_bill_count}</td>
@@ -129,21 +144,19 @@
     }
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
-  }
-
   // ---------------- Stock ----------------
 
   async function loadStock() {
     const params = new URLSearchParams();
     if (state.lowStockOnly) params.set("low_stock_only", "true");
+    params.set("page", String(state.stockPage.page));
+    params.set("page_size", String(state.stockPage.pageSize));
     const envelope = await fetchJSON("/api/stock?" + params.toString());
     applySyncEnvelope(envelope);
     state.stock = envelope.data;
+    state.stockPage.total = envelope.total ?? envelope.data.length;
     renderStock();
+    renderPager("stock", state.stockPage);
   }
 
   function renderStock() {
@@ -157,7 +170,7 @@
       const tr = document.createElement("tr");
       if (item.low_stock) tr.className = "row-low-stock";
       tr.innerHTML = `
-        <td>${escapeHtml(item.item_name)}</td>
+        <td class="truncate" title="${escapeHtml(item.item_name)}">${escapeHtml(item.item_name)}</td>
         <td class="num">${fmtNum(item.qty)}</td>
         <td>${escapeHtml(item.unit || "")}</td>
         <td class="num">${fmtMoney(item.value)}</td>
@@ -166,7 +179,31 @@
     }
   }
 
-  // ---------------- Changes (margin notes) ----------------
+  // ---------------- Pagination (shared) ----------------
+
+  function renderPager(kind, pageState) {
+    const totalPages = Math.max(1, Math.ceil(pageState.total / pageState.pageSize));
+    const wrap = $(`#${kind}-pager`);
+    wrap.querySelector('[data-action="prev"]').disabled = pageState.page <= 1;
+    wrap.querySelector('[data-action="next"]').disabled = pageState.page >= totalPages;
+    $(`#${kind}-pager-info`).textContent = `Page ${pageState.page} of ${totalPages} (${pageState.total})`;
+  }
+
+  // ---------------- Tabs ----------------
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    document.querySelectorAll(".tab-btn").forEach((b) => {
+      const isActive = b.dataset.tab === tab;
+      b.classList.toggle("active", isActive);
+      b.setAttribute("aria-selected", String(isActive));
+    });
+    document.querySelectorAll(".tab-panel").forEach((p) => {
+      p.classList.toggle("hidden", p.dataset.tabPanel !== tab);
+    });
+  }
+
+  // ---------------- Changes ----------------
 
   async function loadChanges() {
     const envelope = await fetchJSON("/api/changes?limit=50");
@@ -187,7 +224,9 @@
   // ---------------- Entity detail ----------------
 
   async function openEntityDetail(id) {
+    state.openEntityId = id;
     const envelope = await fetchJSON(`/api/entities/${id}`);
+    if (state.openEntityId !== id) return; // user moved on before this resolved
     applySyncEnvelope(envelope);
     const { entity, bills, balance_history, followups } = envelope.data;
 
@@ -214,8 +253,38 @@
         <li><span class="fu-status">${f.status}</span>${escapeHtml(f.note)}<span class="fu-time">${relativeTime(f.created_at)}</span></li>`).join("")
       : `<li class="empty-row">No followups yet.</li>`;
 
+    resetFollowupStatus();
     $("#followup-form").dataset.entityId = id;
     $("#entity-detail-overlay").classList.remove("hidden");
+
+    loadEntityVouchers(id);
+  }
+
+  async function loadEntityVouchers(id) {
+    const tbody = $("#detail-vouchers-tbody");
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Loading…</td></tr>`;
+    try {
+      const envelope = await fetchJSON(`/api/entities/${id}/vouchers`);
+      if (state.openEntityId !== id) return;
+      if (!envelope.tally_reachable) {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Tally offline — can't load transactions right now.</td></tr>`;
+        return;
+      }
+      const vouchers = envelope.data;
+      tbody.innerHTML = vouchers.length
+        ? vouchers.map((v) => `
+          <tr>
+            <td>${v.date || "—"}</td>
+            <td>${escapeHtml(v.voucher_type)}</td>
+            <td>${escapeHtml(v.voucher_number)}</td>
+            <td class="num">${fmtMoney(v.amount)}</td>
+            <td class="truncate" title="${escapeHtml(v.narration)}">${escapeHtml(v.narration)}</td>
+          </tr>`).join("")
+        : `<tr class="empty-row"><td colspan="5">No transactions found.</td></tr>`;
+    } catch (e) {
+      if (state.openEntityId !== id) return;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="5">Couldn't load transactions.</td></tr>`;
+    }
   }
 
   function renderDetailChart(history) {
@@ -245,14 +314,26 @@
   }
 
   function closeEntityDetail() {
+    state.openEntityId = null;
     $("#entity-detail-overlay").classList.add("hidden");
+  }
+
+  // ---------------- Followup status (custom, no native <select>) ----------------
+
+  function resetFollowupStatus() {
+    state.followupStatus = "pending";
+    document.querySelectorAll("#followup-status-seg .seg-btn").forEach((b) => {
+      const active = b.dataset.status === "pending";
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", String(active));
+    });
   }
 
   async function submitFollowup(e) {
     e.preventDefault();
     const entityId = $("#followup-form").dataset.entityId;
     const note = $("#followup-note").value.trim();
-    const status = $("#followup-status").value;
+    const status = state.followupStatus;
     if (!note) return;
     const created = await fetchJSON(`/api/entities/${entityId}/followup`, {
       method: "POST",
@@ -293,16 +374,29 @@
   function wireEvents() {
     $("#refresh-btn").addEventListener("click", refreshNow);
 
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+
+    const debouncedSearch = debounce(() => {
+      state.entitiesPage.page = 1;
+      loadEntities();
+    }, 300);
     $("#entity-search").addEventListener("input", (e) => {
       state.search = e.target.value;
-      renderEntities();
+      debouncedSearch();
     });
 
     document.querySelectorAll("#type-filter .seg-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll("#type-filter .seg-btn").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll("#type-filter .seg-btn").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        });
         btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
         state.typeFilter = btn.dataset.type;
+        state.entitiesPage.page = 1;
         loadEntities();
       });
     });
@@ -318,12 +412,28 @@
         document.querySelectorAll("#entities-table thead th").forEach((h) => h.classList.remove("sorted", "asc"));
         th.classList.add("sorted");
         if (state.sort.dir === "asc") th.classList.add("asc");
-        renderEntities();
+        state.entitiesPage.page = 1;
+        loadEntities();
       });
+    });
+
+    $("#entities-pager").addEventListener("click", (e) => {
+      const btn = e.target.closest(".pager-btn");
+      if (!btn || btn.disabled) return;
+      state.entitiesPage.page += btn.dataset.action === "next" ? 1 : -1;
+      loadEntities();
+    });
+
+    $("#stock-pager").addEventListener("click", (e) => {
+      const btn = e.target.closest(".pager-btn");
+      if (!btn || btn.disabled) return;
+      state.stockPage.page += btn.dataset.action === "next" ? 1 : -1;
+      loadStock();
     });
 
     $("#low-stock-toggle").addEventListener("change", (e) => {
       state.lowStockOnly = e.target.checked;
+      state.stockPage.page = 1;
       loadStock();
     });
 
@@ -331,6 +441,18 @@
     $("#detail-scrim").addEventListener("click", closeEntityDetail);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closeEntityDetail();
+    });
+
+    document.querySelectorAll("#followup-status-seg .seg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#followup-status-seg .seg-btn").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        });
+        btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
+        state.followupStatus = btn.dataset.status;
+      });
     });
 
     $("#followup-form").addEventListener("submit", submitFollowup);

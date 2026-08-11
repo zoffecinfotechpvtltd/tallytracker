@@ -408,6 +408,36 @@ def fetch_stock_summary() -> list[dict]:
     return results
 
 
+def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100) -> list[dict]:
+    """Returns recent transactions where the given ledger is the voucher's party,
+    newest first: [{ "date": date|None, "voucher_type": str, "voucher_number": str,
+    "amount": float, "narration": str }, ...].
+
+    UNTESTED against real Tally, same as everything else in this file when first
+    written - run with TALLY_CLIENT_DEBUG=1 against a real entity click and fix
+    tag names below if a field comes back empty/wrong. $PartyLedgerName filtering
+    mirrors the $Parent filter already proven working in _fetch_bills()."""
+    req = _adhoc_collection_request(
+        "TTVouchersX2", "Voucher",
+        ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "PARTYLEDGERNAME", "AMOUNT", "NARRATION"],
+        filter_expr=f'$PartyLedgerName = "{_xml_escape(ledger_name)}"',
+    )
+    raw = _post(req)
+    root = _parse_xml(raw)
+
+    results: list[dict] = []
+    for v in root.iter("VOUCHER"):
+        results.append({
+            "date": _parse_tally_date(_first_text(v, "DATE")),
+            "voucher_type": _first_text(v, "VOUCHERTYPENAME") or "",
+            "voucher_number": _first_text(v, "VOUCHERNUMBER") or "",
+            "amount": abs(_parse_amount(_first_text(v, "AMOUNT"))),
+            "narration": _first_text(v, "NARRATION") or "",
+        })
+    results.sort(key=lambda r: r["date"] or date.min, reverse=True)
+    return results[:limit]
+
+
 def _split_qty_unit(raw: str) -> tuple[float, Optional[str]]:
     """Tally often emits stock qty as a combined string like '100 pcs' or '-5 Nos'."""
     if not raw:
