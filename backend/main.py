@@ -75,7 +75,10 @@ def latest_sync_status(conn: sqlite3.Connection) -> tuple[bool, Optional[str]]:
 
 def envelope(conn: sqlite3.Connection, data) -> dict:
     reachable, last_synced_at = latest_sync_status(conn)
-    return {"tally_reachable": reachable, "last_synced_at": last_synced_at, "data": data}
+    return {
+        "tally_reachable": reachable, "last_synced_at": last_synced_at,
+        "company_name": settings.tally.company_name, "data": data,
+    }
 
 
 # ---------------------------------------------------------------------------

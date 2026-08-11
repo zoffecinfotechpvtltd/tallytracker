@@ -38,12 +38,18 @@
     return res.json();
   }
 
+  const DEFAULT_COMPANY_SUBTITLE = "Precision in every entry. Confidence in every balance.";
+
   function applySyncEnvelope(envelope) {
     const offline = !envelope.tally_reachable;
     $("#sync-dot").classList.toggle("offline", offline);
     $("#sync-text").textContent = offline
       ? `Offline — last synced ${relativeTime(envelope.last_synced_at)}`
       : `Synced ${relativeTime(envelope.last_synced_at)}`;
+
+    const company = envelope.company_name;
+    $("#company-name").textContent =
+      company && company !== "Your Company Name" ? company : DEFAULT_COMPANY_SUBTITLE;
 
     const banner = $("#offline-banner");
     if (offline) {
