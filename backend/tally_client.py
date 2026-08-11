@@ -440,8 +440,19 @@ def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100, lookback_days:
         ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "NARRATION"],
         extra_static_vars=date_range_vars,
     )
-    raw = _post(req)
-    root = _parse_xml(raw)
+
+    # Same intermittent-empty-result fault as everywhere else this Tally
+    # install talks to us (see poller._fetch_all) - a whole year of company-
+    # wide vouchers coming back with zero <VOUCHER> elements is implausible,
+    # so treat that as a signal to retry rather than a true "no data" result.
+    root = None
+    for attempt in range(1, 4):
+        raw = _post(req)
+        root = _parse_xml(raw)
+        if any(True for _ in root.iter("VOUCHER")) or attempt == 3:
+            break
+        time.sleep(2.0)
+
     target = _normalize_name(ledger_name)
 
     results: list[dict] = []
