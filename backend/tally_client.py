@@ -255,7 +255,7 @@ def fetch_company_list() -> list[str]:
 
 
 def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields: list[str],
-                               filter_expr: Optional[str] = None) -> str:
+                               filter_expr: Optional[str] = None, extra_static_vars: str = "") -> str:
     fetch_tag = "\n     ".join(f"<FETCH>{f}</FETCH>" for f in fetch_fields)
     filter_block = ""
     system_filter = ""
@@ -274,6 +274,7 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
    <STATICVARIABLES>
     <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
     {_current_company_tag()}
+    {extra_static_vars}
    </STATICVARIABLES>
    <TDL>
     <TDLMESSAGE>
@@ -412,23 +413,32 @@ def _normalize_name(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip()).casefold()
 
 
-def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100) -> list[dict]:
+def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100, lookback_days: int = 365) -> list[dict]:
     """Returns recent transactions where the given ledger appears in the voucher,
     newest first: [{ "date": date|None, "voucher_type": str, "voucher_number": str,
     "amount": float, "narration": str }, ...].
 
-    Confirmed against real Tally data: AMOUNT is NOT a top-level Voucher field -
-    Tally only exposes it per leg, inside each ALLLEDGERENTRIES.LIST entry, and
-    it ignores the FETCH field list for vouchers entirely (always returns the
-    full native object with every native sub-list). So this reads the amount
-    from whichever ALLLEDGERENTRIES.LIST entry's LEDGERNAME matches the ledger
-    being viewed - that's the correct "this entity's amount in this voucher"
-    value, not the voucher's total. $PartyLedgerName filtering mirrors the
-    $Parent filter already proven working in _fetch_bills()."""
+    Confirmed against real Tally data, two separate bugs:
+    1. AMOUNT is NOT a top-level Voucher field - only exposed per leg, inside
+       each ALLLEDGERENTRIES.LIST entry (Tally ignores the FETCH field list for
+       vouchers entirely, always returns the full native object regardless).
+       Fixed by reading the amount from whichever ALLLEDGERENTRIES.LIST entry's
+       LEDGERNAME matches the ledger being viewed.
+    2. $PartyLedgerName filtering (which worked for a Payment voucher) came back
+       completely empty for a salary ledger with a real, non-zero balance -
+       "party" is an invoice-style concept (Payment/Receipt/Sales/Purchase) that
+       Journal vouchers (how things like salary provisioning post) don't have,
+       so that filter silently excludes entire voucher types. Replaced with a
+       date-range scope (no party filter at all) plus the same client-side
+       ledger-entry match already used for the amount, which catches every
+       voucher type since it just inspects the real line items."""
+    from_date = (date.today() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    to_date = date.today().strftime("%Y%m%d")
+    date_range_vars = f'<SVFROMDATE TYPE="Date">{from_date}</SVFROMDATE><SVTODATE TYPE="Date">{to_date}</SVTODATE>'
     req = _adhoc_collection_request(
         "TTVouchersX2", "Voucher",
         ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "NARRATION"],
-        filter_expr=f'$PartyLedgerName = "{_xml_escape(ledger_name)}"',
+        extra_static_vars=date_range_vars,
     )
     raw = _post(req)
     root = _parse_xml(raw)
