@@ -247,8 +247,8 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
     filter_block = ""
     system_filter = ""
     if filter_expr:
-        filter_block = "<FILTER>TallyTrackerFilter</FILTER>"
-        system_filter = f"<SYSTEM TYPE=\"Formulae\" NAME=\"TallyTrackerFilter\">{filter_expr}</SYSTEM>"
+        filter_block = "<FILTER>TTFilterX2</FILTER>"
+        system_filter = f"<SYSTEM TYPE=\"Formulae\" NAME=\"TTFilterX2\">{filter_expr}</SYSTEM>"
     return f"""<ENVELOPE>
  <HEADER>
   <VERSION>1</VERSION>
@@ -280,7 +280,7 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
 def fetch_trial_balance() -> list[dict]:
     """Returns: [{ "ledger_name": str, "balance": float, "balance_type": "Dr"|"Cr" }, ...]"""
     req = _adhoc_collection_request(
-        "TallyTrackerLedgers", "Ledger", ["NAME", "PARENT", "CLOSINGBALANCE"],
+        "TTLedgersX2", "Ledger", ["NAME", "PARENT", "CLOSINGBALANCE"],
     )
     raw = _post(req)
     root = _parse_xml(raw)
@@ -301,7 +301,7 @@ def fetch_trial_balance() -> list[dict]:
 
 def _fetch_bills(group_name: str) -> list[dict]:
     req = _adhoc_collection_request(
-        "TallyTrackerBills",
+        "TTBillsX2",
         "Ledger",
         [
             "NAME", "PARENT",
@@ -369,7 +369,7 @@ def fetch_bills_payable() -> list[dict]:
 def fetch_stock_summary() -> list[dict]:
     """Returns: [{ "item_name": str, "qty": float, "unit": str, "value": float }, ...]"""
     req = _adhoc_collection_request(
-        "TallyTrackerStock", "StockItem",
+        "TTStockX2", "StockItem",
         ["NAME", "BASEUNITS", "CLOSINGBALANCE", "CLOSINGVALUE"],
     )
     raw = _post(req)
