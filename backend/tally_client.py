@@ -408,30 +408,47 @@ def fetch_stock_summary() -> list[dict]:
     return results
 
 
+def _normalize_name(s: str) -> str:
+    return re.sub(r"\s+", " ", s.strip()).casefold()
+
+
 def fetch_vouchers_for_ledger(ledger_name: str, limit: int = 100) -> list[dict]:
-    """Returns recent transactions where the given ledger is the voucher's party,
+    """Returns recent transactions where the given ledger appears in the voucher,
     newest first: [{ "date": date|None, "voucher_type": str, "voucher_number": str,
     "amount": float, "narration": str }, ...].
 
-    UNTESTED against real Tally, same as everything else in this file when first
-    written - run with TALLY_CLIENT_DEBUG=1 against a real entity click and fix
-    tag names below if a field comes back empty/wrong. $PartyLedgerName filtering
-    mirrors the $Parent filter already proven working in _fetch_bills()."""
+    Confirmed against real Tally data: AMOUNT is NOT a top-level Voucher field -
+    Tally only exposes it per leg, inside each ALLLEDGERENTRIES.LIST entry, and
+    it ignores the FETCH field list for vouchers entirely (always returns the
+    full native object with every native sub-list). So this reads the amount
+    from whichever ALLLEDGERENTRIES.LIST entry's LEDGERNAME matches the ledger
+    being viewed - that's the correct "this entity's amount in this voucher"
+    value, not the voucher's total. $PartyLedgerName filtering mirrors the
+    $Parent filter already proven working in _fetch_bills()."""
     req = _adhoc_collection_request(
         "TTVouchersX2", "Voucher",
-        ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "PARTYLEDGERNAME", "AMOUNT", "NARRATION"],
+        ["DATE", "VOUCHERTYPENAME", "VOUCHERNUMBER", "NARRATION"],
         filter_expr=f'$PartyLedgerName = "{_xml_escape(ledger_name)}"',
     )
     raw = _post(req)
     root = _parse_xml(raw)
+    target = _normalize_name(ledger_name)
 
     results: list[dict] = []
     for v in root.iter("VOUCHER"):
+        amount = None
+        for entry in v.findall("ALLLEDGERENTRIES.LIST"):
+            entry_ledger = _first_text(entry, "LEDGERNAME")
+            if entry_ledger and _normalize_name(entry_ledger) == target:
+                amount = _parse_amount(_first_text(entry, "AMOUNT"))
+                break
+        if amount is None:
+            continue  # this ledger's own leg wasn't in this voucher - skip rather than show a wrong amount
         results.append({
             "date": _parse_tally_date(_first_text(v, "DATE")),
             "voucher_type": _first_text(v, "VOUCHERTYPENAME") or "",
             "voucher_number": _first_text(v, "VOUCHERNUMBER") or "",
-            "amount": abs(_parse_amount(_first_text(v, "AMOUNT"))),
+            "amount": abs(amount),
             "narration": _first_text(v, "NARRATION") or "",
         })
     results.sort(key=lambda r: r["date"] or date.min, reverse=True)
