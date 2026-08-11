@@ -149,6 +149,12 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
                 )
                 entities[row["id"]] = row
 
+            # Snapshot this BEFORE writing anything for the current cycle, so it
+            # reflects the poll before this one - the reference point close_stale_bills
+            # needs to require two consecutive misses rather than closing on one.
+            prior_row = conn.execute("SELECT taken_at FROM snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            grace_cutoff = prior_row["taken_at"] if prior_row else None
+
             bills_by_entity: dict[int, list[str]] = {}
             for bill in raw_bills_r:
                 entity_row = resolve_entity(conn, poll_ts, bill["ledger_name"], entity_type="customer")
@@ -162,7 +168,7 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
                 bills_by_entity.setdefault(entity_row["id"], []).append(bill_row["bill_ref"])
 
             for entity_id, refs in bills_by_entity.items():
-                db.close_stale_bills(conn, entity_id, refs, poll_ts)
+                db.close_stale_bills(conn, entity_id, refs, poll_ts, grace_cutoff=grace_cutoff)
 
             stock_deltas = []
             for item in raw_stock:

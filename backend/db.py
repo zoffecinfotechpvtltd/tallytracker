@@ -228,24 +228,36 @@ def upsert_bill(
     return row
 
 
-def close_stale_bills(conn: sqlite3.Connection, entity_id: int, seen_bill_refs: list[str], seen_at: str) -> list[sqlite3.Row]:
-    """Mark as closed any open/overdue bill for this entity NOT present in this poll's bill list.
-    Never deletes rows - see 01_ARCHITECTURE_AND_DATA_MODEL.md 'Bill lifecycle'."""
+def close_stale_bills(
+    conn: sqlite3.Connection, entity_id: int, seen_bill_refs: list[str], seen_at: str,
+    grace_cutoff: Optional[str] = None,
+) -> list[sqlite3.Row]:
+    """Mark as closed any open/overdue bill for this entity NOT present in this
+    poll's bill list AND not present in the poll before that either. Never
+    deletes rows - see 01_ARCHITECTURE_AND_DATA_MODEL.md 'Bill lifecycle'.
+
+    Requires two consecutive misses (grace_cutoff = the previous successful
+    poll's timestamp) before closing, not one: Tally's ad-hoc export has been
+    observed to come back incomplete for a single cycle with no error, and
+    closing on the first miss would misreport genuinely still-open bills as
+    settled just because one poll happened to drop them."""
     if seen_bill_refs:
         placeholders = ",".join("?" for _ in seen_bill_refs)
-        rows = conn.execute(
-            f"""
+        query = f"""
             SELECT * FROM bills
             WHERE entity_id = ? AND status IN ('open','overdue')
               AND bill_ref NOT IN ({placeholders})
-            """,
-            (entity_id, *seen_bill_refs),
-        ).fetchall()
+        """
+        params: list = [entity_id, *seen_bill_refs]
     else:
-        rows = conn.execute(
-            "SELECT * FROM bills WHERE entity_id = ? AND status IN ('open','overdue')",
-            (entity_id,),
-        ).fetchall()
+        query = "SELECT * FROM bills WHERE entity_id = ? AND status IN ('open','overdue')"
+        params = [entity_id]
+
+    if grace_cutoff is not None:
+        query += " AND last_seen_at < ?"
+        params.append(grace_cutoff)
+
+    rows = conn.execute(query, params).fetchall()
 
     closed = []
     for r in rows:
