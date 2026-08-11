@@ -32,6 +32,8 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
+import time
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
@@ -77,7 +79,27 @@ def _debug(label: str, raw: str) -> None:
         print(f"--- end {label} ---\n", file=sys.stderr)
 
 
+_MIN_REQUEST_INTERVAL_S = 1.0
+_request_lock = threading.Lock()
+_last_request_at = 0.0
+
+
+def _throttle() -> None:
+    """Tally's single-client XML server appears unable to handle back-to-back
+    requests with no gap - a sync cycle firing 5 requests in a tight loop
+    (alive-check + 4 fetches) consistently came back empty across all of them,
+    while isolated single requests spaced out in time worked fine. Enforcing a
+    minimum gap between any two requests this process makes to Tally."""
+    global _last_request_at
+    with _request_lock:
+        wait = _last_request_at + _MIN_REQUEST_INTERVAL_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at = time.monotonic()
+
+
 def _post(xml_body: str, timeout_s: float = 10.0) -> str:
+    _throttle()
     data = xml_body.encode("utf-8")
     req = urllib.request.Request(TALLY_URL, data=data, headers={"Content-Type": "text/xml"})
     try:
