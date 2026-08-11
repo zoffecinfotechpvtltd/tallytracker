@@ -37,10 +37,26 @@ import urllib.error
 import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 from typing import Optional
+from xml.sax.saxutils import escape as _xml_escape
+
+from config import settings
 
 TALLY_HOST = os.environ.get("TALLY_HOST", "localhost")
 TALLY_PORT = int(os.environ.get("TALLY_PORT", "9000"))
 TALLY_URL = f"http://{TALLY_HOST}:{TALLY_PORT}"
+
+_DEFAULT_COMPANY_PLACEHOLDER = "Your Company Name"
+
+
+def _current_company_tag() -> str:
+    """Pin requests to the company set in config.yaml, so results don't silently
+    depend on whichever company happens to be active in the Tally UI. Skipped
+    when left at the placeholder default (single-company setups still work
+    off whatever's open)."""
+    name = (settings.tally.company_name or "").strip()
+    if not name or name == _DEFAULT_COMPANY_PLACEHOLDER:
+        return ""
+    return f"<SVCURRENTCOMPANY>{_xml_escape(name)}</SVCURRENTCOMPANY>"
 
 DEBUG = os.environ.get("TALLY_CLIENT_DEBUG", "") == "1"
 
@@ -149,6 +165,9 @@ def check_tally_alive(timeout_s: float = 2.5) -> bool:
         return False
 
 
+# Deliberately NOT bound to SVCURRENTCOMPANY - this must succeed as long as Tally
+# itself is up, even if config.yaml's company_name is wrong/stale. Also doubles
+# as the "what companies are actually open" probe - see fetch_company_list().
 _MINIMAL_PROBE = """<ENVELOPE>
  <HEADER>
   <VERSION>1</VERSION>
@@ -164,6 +183,20 @@ _MINIMAL_PROBE = """<ENVELOPE>
   </DESC>
  </BODY>
 </ENVELOPE>"""
+
+
+def fetch_company_list() -> list[str]:
+    """Returns the exact company name strings Tally has open right now - copy one
+    of these verbatim into config.yaml's tally.company_name (spacing/case/&
+    must match exactly, this is a literal string match on Tally's side)."""
+    raw = _post(_MINIMAL_PROBE)
+    root = _parse_xml(raw)
+    names: list[str] = []
+    for company in root.iter("COMPANY"):
+        name = _text(company.find("NAME"))
+        if name:
+            names.append(name)
+    return names
 
 
 def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields: list[str],
@@ -184,6 +217,7 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
     <REPORTNAME>{collection_name}</REPORTNAME>
     <STATICVARIABLES>
      <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+     {_current_company_tag()}
     </STATICVARIABLES>
    </REQUESTDESC>
   </EXPORTDATA>
