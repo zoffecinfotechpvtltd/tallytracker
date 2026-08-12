@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney, dueTone, dueLabel } from "../format.js";
+import { downloadCsv } from "../csv.js";
+import { showToast } from "../toast.js";
 
 const COPY = {
   payable: {
@@ -39,6 +41,16 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
   const totalAmount = rows.reduce((sum, r) => sum + (r.amount_outstanding || 0), 0);
   const overdueCount = rows.filter((r) => r.days_until_due !== null && r.days_until_due < 0).length;
 
+  function handleExport() {
+    if (rows.length === 0) return;
+    downloadCsv(
+      `${direction}-${new Date().toISOString().slice(0, 10)}.csv`,
+      [copy.entityLabel, "Bill Ref", "Bill Date", "Due Date", "Days Until Due", "Amount Outstanding"],
+      rows.map((r) => [r.entity_name, r.bill_ref, r.bill_date, r.due_date, r.days_until_due, r.amount_outstanding]),
+    );
+    showToast(`Exported ${rows.length} rows`);
+  }
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -51,6 +63,9 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
             {rows.length} bills · {fmtMoney(totalAmount)} total
             {overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
           </span>
+          <button className="pager-btn" type="button" onClick={handleExport} disabled={rows.length === 0}>
+            Export CSV
+          </button>
         </div>
       </div>
       <div className="table-wrap">

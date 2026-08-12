@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { useLiveUpdates } from "./hooks/useLiveUpdates.js";
+import { showToast } from "./toast.js";
 import Header from "./components/Header.jsx";
 import OverviewTiles from "./components/OverviewTiles.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -10,6 +11,8 @@ import DueListView from "./components/DueListView.jsx";
 import ReconciliationView from "./components/ReconciliationView.jsx";
 import ActivityView from "./components/ActivityView.jsx";
 import EntityDetail from "./components/EntityDetail.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import ToastContainer from "./components/ToastContainer.jsx";
 
 export default function App() {
   const { tick, connected } = useLiveUpdates();
@@ -34,7 +37,14 @@ export default function App() {
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      await api.refresh();
+      const result = await api.refresh();
+      if (!result.tally_reachable) {
+        showToast("Tally isn't reachable right now — showing last known data", "error");
+      } else {
+        showToast(result.changes_detected > 0 ? `Synced — ${result.changes_detected} change${result.changes_detected === 1 ? "" : "s"}` : "Synced — nothing new");
+      }
+    } catch (e) {
+      showToast("Refresh failed — try again", "error");
     } finally {
       setRefreshing(false);
     }
@@ -49,19 +59,25 @@ export default function App() {
           <main className="layout">
             <OverviewTiles data={overview} />
 
-            {activeTab === "entities" && <EntitiesView tick={tick} onOpenEntity={setOpenEntityId} />}
-            {activeTab === "stock" && <StockView tick={tick} />}
-            {activeTab === "payable" && <DueListView direction="payable" tick={tick} onOpenEntity={setOpenEntityId} />}
-            {activeTab === "receivable" && <DueListView direction="receivable" tick={tick} onOpenEntity={setOpenEntityId} />}
-            {activeTab === "reconciliation" && <ReconciliationView />}
-            {activeTab === "activity" && <ActivityView tick={tick} />}
+            <ErrorBoundary key={activeTab}>
+              {activeTab === "entities" && <EntitiesView tick={tick} onOpenEntity={setOpenEntityId} />}
+              {activeTab === "stock" && <StockView tick={tick} />}
+              {activeTab === "payable" && <DueListView direction="payable" tick={tick} onOpenEntity={setOpenEntityId} />}
+              {activeTab === "receivable" && <DueListView direction="receivable" tick={tick} onOpenEntity={setOpenEntityId} />}
+              {activeTab === "reconciliation" && <ReconciliationView />}
+              {activeTab === "activity" && <ActivityView tick={tick} />}
+            </ErrorBoundary>
           </main>
         </div>
       </div>
 
       {openEntityId !== null && (
-        <EntityDetail entityId={openEntityId} onClose={() => setOpenEntityId(null)} />
+        <ErrorBoundary>
+          <EntityDetail entityId={openEntityId} onClose={() => setOpenEntityId(null)} />
+        </ErrorBoundary>
       )}
+
+      <ToastContainer />
     </>
   );
 }

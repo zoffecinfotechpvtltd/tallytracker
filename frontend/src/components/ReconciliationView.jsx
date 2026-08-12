@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney } from "../format.js";
+import { showToast } from "../toast.js";
+import Dropdown from "./Dropdown.jsx";
 
 function confidenceTier(confidence) {
   if (confidence === null || confidence === undefined) return "low";
@@ -18,7 +20,10 @@ function TransactionRow({ txn, onConfirm, onIgnore }) {
   const [pickedBillRef, setPickedBillRef] = useState("");
 
   useEffect(() => {
-    if (!overriding || query.length < 2) {
+    // Skip once an entity is picked - picking sets query to the entity's own
+    // name programmatically, which would otherwise re-trigger this same
+    // search and pop the suggestion list back open right after choosing it.
+    if (!overriding || query.length < 2 || pickedEntity) {
       setCandidates([]);
       return;
     }
@@ -32,7 +37,7 @@ function TransactionRow({ txn, onConfirm, onIgnore }) {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [query, overriding]);
+  }, [query, overriding, pickedEntity]);
 
   function pickEntity(entity) {
     setPickedEntity(entity);
@@ -77,7 +82,7 @@ function TransactionRow({ txn, onConfirm, onIgnore }) {
       </td>
       <td>
         {alreadyDecided ? null : overriding ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 220 }}>
+          <div className="override-panel">
             <input
               className="search-input"
               style={{ width: "100%" }}
@@ -89,21 +94,23 @@ function TransactionRow({ txn, onConfirm, onIgnore }) {
               }}
             />
             {candidates.length > 0 && (
-              <select size={Math.min(4, candidates.length)} onChange={(e) => pickEntity(candidates[e.target.selectedIndex])}>
+              <ul className="typeahead-list">
                 {candidates.map((c) => (
-                  <option key={c.id}>{c.name}</option>
+                  <li key={c.id}>
+                    <button type="button" className="typeahead-option" onClick={() => pickEntity(c)}>
+                      {c.name}
+                    </button>
+                  </li>
                 ))}
-              </select>
+              </ul>
             )}
             {pickedEntity && bills.length > 0 && (
-              <select value={pickedBillRef} onChange={(e) => setPickedBillRef(e.target.value)}>
-                <option value="">Select bill…</option>
-                {bills.map((b) => (
-                  <option key={b.bill_ref} value={b.bill_ref}>
-                    {b.bill_ref} ({fmtMoney(b.amount_outstanding)})
-                  </option>
-                ))}
-              </select>
+              <Dropdown
+                value={pickedBillRef}
+                placeholder="Select bill…"
+                onChange={setPickedBillRef}
+                options={bills.map((b) => ({ value: b.bill_ref, label: `${b.bill_ref} (${fmtMoney(b.amount_outstanding)})` }))}
+              />
             )}
             <div className="recon-actions">
               <button
@@ -179,6 +186,7 @@ export default function ReconciliationView() {
       setActiveStatementId(result.statement_id);
       const rows = await api.reconciliationTransactions(result.statement_id);
       setTransactions(rows);
+      showToast(`Loaded ${rows.length} transaction${rows.length === 1 ? "" : "s"} from ${file.name}`);
     } catch (e) {
       setError("Could not process that file — make sure it's a .xlsx bank statement export with Date/Narration/Debit/Credit columns.");
     } finally {
@@ -192,13 +200,23 @@ export default function ReconciliationView() {
   }
 
   async function handleConfirm(transactionId, entityId, billRef) {
-    await api.confirmMatch(transactionId, entityId, billRef);
-    refreshTransactions();
+    try {
+      await api.confirmMatch(transactionId, entityId, billRef);
+      showToast("Match confirmed");
+      refreshTransactions();
+    } catch (e) {
+      showToast("Couldn't confirm that match — try again", "error");
+    }
   }
 
   async function handleIgnore(transactionId) {
-    await api.ignoreTransaction(transactionId);
-    refreshTransactions();
+    try {
+      await api.ignoreTransaction(transactionId);
+      showToast("Transaction ignored");
+      refreshTransactions();
+    } catch (e) {
+      showToast("Couldn't ignore that transaction — try again", "error");
+    }
   }
 
   const unresolvedCount = transactions.filter((t) => t.match_status === "unmatched").length;
@@ -211,17 +229,11 @@ export default function ReconciliationView() {
           <p className="panel-sub">Upload a bank statement, review suggested matches, confirm or correct each one.</p>
         </div>
         {statements.length > 0 && (
-          <select
-            className="search-input"
-            value={activeStatementId ?? ""}
-            onChange={(e) => setActiveStatementId(Number(e.target.value))}
-          >
-            {statements.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.filename} ({s.row_count} rows)
-              </option>
-            ))}
-          </select>
+          <Dropdown
+            value={activeStatementId}
+            onChange={setActiveStatementId}
+            options={statements.map((s) => ({ value: s.id, label: `${s.filename} (${s.row_count} rows)` }))}
+          />
         )}
       </div>
 

@@ -11,6 +11,7 @@ import {
 } from "chart.js";
 import { api } from "../api.js";
 import { fmtMoney, relativeTime } from "../format.js";
+import { showToast } from "../toast.js";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip);
 
@@ -55,9 +56,14 @@ export default function EntityDetail({ entityId, onClose }) {
   async function submitFollowup(e) {
     e.preventDefault();
     if (!note.trim()) return;
-    const created = await api.postFollowup(entityId, note.trim(), status);
-    setDetail((d) => ({ ...d, followups: [created, ...d.followups] }));
-    setNote("");
+    try {
+      const created = await api.postFollowup(entityId, note.trim(), status);
+      setDetail((d) => ({ ...d, followups: [created, ...d.followups] }));
+      setNote("");
+      showToast("Followup added");
+    } catch (err) {
+      showToast("Couldn't save that followup — try again", "error");
+    }
   }
 
   useEffect(() => {
