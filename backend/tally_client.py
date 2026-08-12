@@ -293,8 +293,13 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
 
 def fetch_trial_balance() -> list[dict]:
     """Returns: [{ "ledger_name": str, "balance": float, "balance_type": "Dr"|"Cr" }, ...]"""
+    wide_range = (
+        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
+        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
+    )
     req = _adhoc_collection_request(
         "TTLedgersX2", "Ledger", ["NAME", "PARENT", "CLOSINGBALANCE"],
+        extra_static_vars=wide_range,
     )
     raw = _post(req)
     root = _parse_xml(raw)
@@ -314,6 +319,15 @@ def fetch_trial_balance() -> list[dict]:
 
 
 def _fetch_bills(group_name: str) -> list[dict]:
+    # Ledger master exports are implicitly scoped to whatever "Current Period"
+    # is set inside the Tally UI (F2/Alter Period) - if that's stuck on an old
+    # financial year, bills raised since then silently never come back, even
+    # though the ledger itself is up to date. Pin an explicit wide range so
+    # this doesn't depend on whatever period Tally happens to have open.
+    wide_range = (
+        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
+        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
+    )
     req = _adhoc_collection_request(
         "TTBillsX2",
         "Ledger",
@@ -326,6 +340,7 @@ def _fetch_bills(group_name: str) -> list[dict]:
             "BILLALLOCATIONS.CLOSINGBALANCE",
         ],
         filter_expr=f"$Parent = \"{group_name}\"",
+        extra_static_vars=wide_range,
     )
     raw = _post(req)
     root = _parse_xml(raw)
@@ -386,7 +401,14 @@ def _extract_bill_dates(bill_elem: ET.Element) -> tuple[Optional[date], Optional
     present but empty/unparseable), fall back to bill_date + the configured
     default credit period instead of leaving due_date as None - an unknown
     due date otherwise sorts a bill to the very bottom of Payable/Receivable
-    regardless of how recent or urgent it actually is."""
+    regardless of how recent or urgent it actually is.
+
+    Also falls back when the JD-derived due date lands exactly on bill_date
+    (0-day gap): confirmed against one real bill, but seeing that same exact
+    match repeat across unrelated vendors in real data is a signal the JD
+    value isn't reliably encoding an independent due date for every bill on
+    this install, not that every one of those vendors genuinely has 0-day
+    terms - the configured default is a better estimate than trusting it."""
     bill_date = _parse_tally_date(_first_text(bill_elem, "BILLDATE"))
     credit_elem = bill_elem.find("BILLCREDITPERIOD")
     due_date: Optional[date] = None
@@ -394,6 +416,8 @@ def _extract_bill_dates(bill_elem: ET.Element) -> tuple[Optional[date], Optional
         jd_raw = credit_elem.get("JD")
         if credit_elem.get("TYPE") == "Due Date" and jd_raw:
             due_date = _julian_day_to_date(jd_raw)
+            if due_date is not None and bill_date is not None and due_date == bill_date:
+                due_date = None
         else:
             credit_raw = _text(credit_elem)
             if credit_raw:
@@ -421,9 +445,14 @@ def fetch_bills_payable() -> list[dict]:
 
 def fetch_stock_summary() -> list[dict]:
     """Returns: [{ "item_name": str, "qty": float, "unit": str, "value": float }, ...]"""
+    wide_range = (
+        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
+        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
+    )
     req = _adhoc_collection_request(
         "TTStockX2", "StockItem",
         ["NAME", "BASEUNITS", "CLOSINGBALANCE", "CLOSINGVALUE"],
+        extra_static_vars=wide_range,
     )
     raw = _post(req)
     root = _parse_xml(raw)
