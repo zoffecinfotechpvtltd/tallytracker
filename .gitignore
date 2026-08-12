@@ -4,3 +4,6 @@ backend/*.pyc
 backend/test_phase*.db
 backend/*.log
 .venv/
+
+frontend/node_modules/
+frontend/dist/

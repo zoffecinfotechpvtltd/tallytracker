@@ -487,6 +487,13 @@ def ignore_bank_transaction(transaction_id: int):
 # Static frontend (Phase 5) - mounted last so it doesn't shadow /api routes
 # ---------------------------------------------------------------------------
 
-_frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.isdir(_frontend_dir):
-    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+_frontend_dist_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(_frontend_dist_dir):
+    app.mount("/", StaticFiles(directory=_frontend_dist_dir, html=True), name="frontend")
+else:
+    @app.get("/")
+    def _frontend_not_built():
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend not built yet - run `npm install && npm run build` in the frontend/ directory.",
+        )

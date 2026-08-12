@@ -24,6 +24,27 @@ if (-not (Test-Path $scriptPath)) {
     throw "run_server.py not found at $scriptPath"
 }
 
+# Frontend is a React app now - main.py serves frontend/dist, which needs a
+# build step. Build it here so a fresh checkout works with just this one
+# script, same "always up after reboot" guarantee the scheduled task gives
+# the backend.
+$frontendDir = Join-Path $PSScriptRoot "..\frontend"
+$npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $npmCmd) { $npmCmd = Get-Command npm -ErrorAction SilentlyContinue }
+if (-not $npmCmd) {
+    throw "npm not found on PATH - install Node.js (https://nodejs.org) before running this script, it's needed to build the dashboard frontend."
+}
+Write-Host "Building frontend..."
+Push-Location $frontendDir
+try {
+    & $npmCmd.Source install --no-fund --no-audit
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+    & $npmCmd.Source run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+} finally {
+    Pop-Location
+}
+
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$scriptPath`"" -WorkingDirectory $PSScriptRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet `

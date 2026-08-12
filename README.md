@@ -11,7 +11,17 @@ installed here). See "What still needs your real Tally" below.
 ```
 cd backend
 python -m pip install -r requirements.txt
+
+cd ../frontend
+npm install
+npm run build
 ```
+
+The frontend is a React app (Vite) — `npm run build` produces `frontend/dist`,
+which `main.py` serves. Run `npm run build` again after any frontend change;
+`install_task.ps1` (below) does this automatically. `npm run dev` (from
+`frontend/`) runs a hot-reload dev server on its own port with `/api`
+proxied to the backend, if you're actively editing the frontend.
 
 Edit `backend/config.yaml` — at minimum set `tally.company_name`. Defaults
 assume Tally is on `localhost:9000` (Gateway of Tally > F1 Help > Settings
@@ -103,20 +113,23 @@ python test_api.py      # Phase 4 - API contracts, offline fake Tally
 
 ```
 backend/
-  phase0_raw_probe.py    # Phase 0 - throwaway connectivity check
-  db.py                  # Phase 1 - schema, upserts, dedup enforcement
+  phase0_raw_probe.py       # Phase 0 - throwaway connectivity check
+  db.py                     # Phase 1 - schema, upserts, dedup enforcement
   test_db.py
-  tally_client.py         # Phase 2 - the only file that knows Tally's XML tags
+  tally_client.py            # Phase 2 - the only file that knows Tally's XML tags
   test_tally_client.py
-  diff_engine.py          # Phase 3 - compares snapshots, writes `changes`
-  poller.py               # Phase 3 - the one sync loop (timer + /api/refresh)
+  diff_engine.py             # Phase 3 - compares snapshots, writes `changes`
+  poller.py                  # Phase 3 - the one sync loop (timer + /api/refresh)
   test_poller.py
-  main.py                 # Phase 4 - FastAPI REST API
+  main.py                    # Phase 4 - FastAPI REST API + SSE live-update stream
   test_api.py
-  notifier.py              # Phase 6 - desktop notifications, one per change
-  config.py / config.yaml  # Phase 6 - single source of truth for settings
+  bank_reconciliation.py     # bank statement upload/parsing + fuzzy match scoring
+  notifier.py                 # Phase 6 - desktop notifications, one per change
+  config.py / config.yaml     # Phase 6 - single source of truth for settings
 frontend/
-  index.html / style.css / app.js   # Phase 5 - dashboard (no build step)
+  src/                       # React app (Vite) - components, api client, hooks
+  dist/                      # build output, served by main.py (git-ignored)
+  package.json / vite.config.js
 ```
 
 ## Non-negotiable rule this build follows throughout
