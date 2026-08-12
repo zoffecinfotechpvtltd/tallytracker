@@ -13,5 +13,11 @@ alerts:
 stock:
   low_stock_threshold: 10
 
+billing:
+  # Used only when Tally gives no due-date signal at all for a bill - your
+  # standard credit terms, applied as bill_date + this many days, so such
+  # bills still get a real due date instead of showing "No due date".
+  default_credit_days: 30
+
 database:
   path: "./tally.db"

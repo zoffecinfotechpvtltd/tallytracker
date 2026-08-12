@@ -1,24 +1,27 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney, fmtNum } from "../format.js";
+import { useSort } from "../hooks/useSort.js";
 import Pager from "./Pager.jsx";
+import SortableHeader from "./SortableHeader.jsx";
 
 const PAGE_SIZE = 50;
 
 export default function StockView({ tick }) {
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const { sortColumn, sortDir, toggleSort } = useSort("item_name");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => setPage(1), [lowStockOnly]);
+  useEffect(() => setPage(1), [lowStockOnly, sortColumn, sortDir]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     api
-      .stock({ lowStockOnly, page, pageSize: PAGE_SIZE })
+      .stock({ lowStockOnly, sortBy: sortColumn, sortDir, page, pageSize: PAGE_SIZE })
       .then((envelope) => {
         if (cancelled) return;
         setRows(envelope.data);
@@ -29,7 +32,9 @@ export default function StockView({ tick }) {
     return () => {
       cancelled = true;
     };
-  }, [lowStockOnly, page, tick]);
+  }, [lowStockOnly, sortColumn, sortDir, page, tick]);
+
+  const headerProps = { sortColumn, sortDir, onSort: toggleSort };
 
   return (
     <section className="panel stock-panel">
@@ -44,10 +49,10 @@ export default function StockView({ tick }) {
         <table>
           <thead>
             <tr>
-              <th>Item</th>
-              <th className="num">Qty</th>
-              <th>Unit</th>
-              <th className="num">Value</th>
+              <SortableHeader column="item_name" label="Item" {...headerProps} />
+              <SortableHeader column="qty" label="Qty" numeric {...headerProps} />
+              <SortableHeader column="unit" label="Unit" {...headerProps} />
+              <SortableHeader column="value" label="Value" numeric {...headerProps} />
             </tr>
           </thead>
           <tbody>

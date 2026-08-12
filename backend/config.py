@@ -31,6 +31,15 @@ class StockSettings(BaseModel):
     low_stock_threshold: float = 10
 
 
+class BillingSettings(BaseModel):
+    # Used only when Tally gives no due-date signal at all for a bill (no
+    # BILLCREDITPERIOD/JD, no explicit credit-period text) - your standard
+    # credit terms, applied as bill_date + this many days, so such bills
+    # still get a real due date instead of silently sorting to the bottom
+    # of Payable/Receivable with no due date shown.
+    default_credit_days: int = 30
+
+
 class DatabaseSettings(BaseModel):
     path: str = "./tally.db"
 
@@ -40,6 +49,7 @@ class Settings(BaseModel):
     polling: PollingSettings = PollingSettings()
     alerts: AlertsSettings = AlertsSettings()
     stock: StockSettings = StockSettings()
+    billing: BillingSettings = BillingSettings()
     database: DatabaseSettings = DatabaseSettings()
 
 

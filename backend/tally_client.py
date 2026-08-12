@@ -380,7 +380,13 @@ def _extract_bill_dates(bill_elem: ET.Element) -> tuple[Optional[date], Optional
     BILLCREDITPERIOD can show up three ways depending on how the bill's credit
     terms were configured: a JD-attribute-encoded due date (see
     _julian_day_to_date), a plain integer in the text (days of credit, add to
-    bill_date), or an explicit date string in the text - handle all three."""
+    bill_date), or an explicit date string in the text - handle all three.
+
+    If none of those produce a due date (BILLCREDITPERIOD missing entirely, or
+    present but empty/unparseable), fall back to bill_date + the configured
+    default credit period instead of leaving due_date as None - an unknown
+    due date otherwise sorts a bill to the very bottom of Payable/Receivable
+    regardless of how recent or urgent it actually is."""
     bill_date = _parse_tally_date(_first_text(bill_elem, "BILLDATE"))
     credit_elem = bill_elem.find("BILLCREDITPERIOD")
     due_date: Optional[date] = None
@@ -398,6 +404,8 @@ def _extract_bill_dates(bill_elem: ET.Element) -> tuple[Optional[date], Optional
                     digits = re.search(r"\d+", credit_raw)
                     if digits and bill_date is not None:
                         due_date = bill_date + timedelta(days=int(digits.group()))
+    if due_date is None and bill_date is not None:
+        due_date = bill_date + timedelta(days=settings.billing.default_credit_days)
     return bill_date, due_date
 
 

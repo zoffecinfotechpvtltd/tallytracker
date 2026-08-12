@@ -128,11 +128,22 @@ def get_overview():
 # GET /api/entities
 # ---------------------------------------------------------------------------
 
+_ENTITY_SORT_KEYS = {
+    "name": lambda i: (i["name"] or "").lower(),
+    "type": lambda i: (i["type"] or "").lower(),
+    "balance": lambda i: i["current_balance"] or 0,
+    "open_bills": lambda i: i["open_bill_count"] or 0,
+    "overdue_bills": lambda i: i["overdue_bill_count"] or 0,
+    "last_changed": lambda i: i["last_changed_at"] or "",
+}
+
+
 @app.get("/api/entities")
 def get_entities(
     type: Optional[str] = None,
     search: Optional[str] = None,
-    sort: Optional[str] = "name_asc",
+    sort_by: str = "name",
+    sort_dir: str = "asc",
     overdue_only: bool = False,
     page: int = 1,
     page_size: int = 50,
@@ -166,10 +177,8 @@ def get_entities(
         if overdue_only:
             items = [i for i in items if i["overdue_bill_count"] > 0]
 
-        if sort == "balance_desc":
-            items.sort(key=lambda i: i["current_balance"] or 0, reverse=True)
-        else:  # name_asc default
-            items.sort(key=lambda i: (i["name"] or "").lower())
+        key_fn = _ENTITY_SORT_KEYS.get(sort_by, _ENTITY_SORT_KEYS["name"])
+        items.sort(key=key_fn, reverse=(sort_dir == "desc"))
 
         page_items, total = _paginate(items, page, page_size)
         return envelope(conn, page_items, total=total, page=page, page_size=page_size)
@@ -278,8 +287,19 @@ def post_followup(entity_id: int, body: FollowupIn):
 # GET /api/stock
 # ---------------------------------------------------------------------------
 
+_STOCK_SORT_KEYS = {
+    "item_name": lambda i: (i["item_name"] or "").lower(),
+    "qty": lambda i: i["qty"] or 0,
+    "unit": lambda i: (i["unit"] or "").lower(),
+    "value": lambda i: i["value"] or 0,
+}
+
+
 @app.get("/api/stock")
-def get_stock(low_stock_only: bool = False, page: int = 1, page_size: int = 50):
+def get_stock(
+    low_stock_only: bool = False, sort_by: str = "item_name", sort_dir: str = "asc",
+    page: int = 1, page_size: int = 50,
+):
     conn = get_conn()
     with _conn_lock:
         threshold = settings.stock.low_stock_threshold
@@ -290,6 +310,8 @@ def get_stock(low_stock_only: bool = False, page: int = 1, page_size: int = 50):
         } for r in rows]
         if low_stock_only:
             items = [i for i in items if i["low_stock"]]
+        key_fn = _STOCK_SORT_KEYS.get(sort_by, _STOCK_SORT_KEYS["item_name"])
+        items.sort(key=key_fn, reverse=(sort_dir == "desc"))
         page_items, total = _paginate(items, page, page_size)
         return envelope(conn, page_items, total=total, page=page, page_size=page_size)
 
@@ -302,9 +324,24 @@ def get_stock(low_stock_only: bool = False, page: int = 1, page_size: int = 50):
 
 _DIRECTION_TO_ENTITY_TYPE = {"payable": "vendor", "receivable": "customer"}
 
+# "due" is the default: soonest-due-first with no-due-date bills sorted last -
+# not just an ascending date sort (see list_bills_due) - so it gets its own key
+# rather than falling out of a plain days_until_due sort (which would put
+# unknown due dates first, backwards from what you'd want).
+_BILLS_DUE_SORT_KEYS = {
+    "entity_name": lambda i: (i["entity_name"] or "").lower(),
+    "bill_ref": lambda i: (i["bill_ref"] or "").lower(),
+    "bill_date": lambda i: i["bill_date"] or "",
+    "due": lambda i: (i["days_until_due"] is None, i["days_until_due"]),
+    "amount": lambda i: i["amount_outstanding"] or 0,
+}
+
 
 @app.get("/api/bills-due")
-def get_bills_due(direction: str):
+def get_bills_due(
+    direction: str, sort_by: str = "due", sort_dir: str = "asc",
+    page: int = 1, page_size: int = 50,
+):
     if direction not in _DIRECTION_TO_ENTITY_TYPE:
         raise HTTPException(status_code=400, detail="direction must be 'payable' or 'receivable'")
     conn = get_conn()
@@ -322,7 +359,17 @@ def get_bills_due(direction: str):
                 "amount_outstanding": r["amount_outstanding"], "status": r["status"],
                 "days_until_due": days_until_due,
             })
-        return envelope(conn, items)
+
+        key_fn = _BILLS_DUE_SORT_KEYS.get(sort_by, _BILLS_DUE_SORT_KEYS["due"])
+        items.sort(key=key_fn, reverse=(sort_dir == "desc"))
+
+        total_amount = sum(i["amount_outstanding"] or 0 for i in items)
+        overdue_count = sum(1 for i in items if i["days_until_due"] is not None and i["days_until_due"] < 0)
+        page_items, total = _paginate(items, page, page_size)
+        return envelope(
+            conn, page_items, total=total, page=page, page_size=page_size,
+            total_amount=total_amount, overdue_count=overdue_count,
+        )
 
 
 # ---------------------------------------------------------------------------

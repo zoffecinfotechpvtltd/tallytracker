@@ -11,11 +11,12 @@ async function request(path, opts) {
 export const api = {
   overview: () => request("/api/overview"),
 
-  entities: ({ type = "", search = "", sort = "name_asc", page = 1, pageSize = 50 } = {}) => {
+  entities: ({ type = "", search = "", sortBy = "name", sortDir = "asc", page = 1, pageSize = 50 } = {}) => {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     if (search) params.set("search", search);
-    params.set("sort", sort);
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir);
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
     return request("/api/entities?" + params.toString());
@@ -32,15 +33,25 @@ export const api = {
       body: JSON.stringify({ note, status }),
     }),
 
-  stock: ({ lowStockOnly = false, page = 1, pageSize = 50 } = {}) => {
+  stock: ({ lowStockOnly = false, sortBy = "item_name", sortDir = "asc", page = 1, pageSize = 50 } = {}) => {
     const params = new URLSearchParams();
     if (lowStockOnly) params.set("low_stock_only", "true");
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir);
     params.set("page", String(page));
     params.set("page_size", String(pageSize));
     return request("/api/stock?" + params.toString());
   },
 
-  billsDue: (direction) => request(`/api/bills-due?direction=${direction}`),
+  billsDue: (direction, { sortBy = "due", sortDir = "asc", page = 1, pageSize = 50 } = {}) => {
+    const params = new URLSearchParams();
+    params.set("direction", direction);
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    return request("/api/bills-due?" + params.toString());
+  },
 
   changes: (limit = 50) => request(`/api/changes?limit=${limit}`),
 

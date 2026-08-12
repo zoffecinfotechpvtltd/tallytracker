@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney, relativeTime } from "../format.js";
+import { useSort } from "../hooks/useSort.js";
 import Pager from "./Pager.jsx";
+import SortableHeader from "./SortableHeader.jsx";
 
 const PAGE_SIZE = 50;
 
@@ -9,8 +11,7 @@ export default function EntitiesView({ tick, onOpenEntity }) {
   const [typeFilter, setTypeFilter] = useState("");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [sortColumn, setSortColumn] = useState("name");
-  const [sortDir, setSortDir] = useState("asc");
+  const { sortColumn, sortDir, toggleSort } = useSort("name");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -30,7 +31,8 @@ export default function EntitiesView({ tick, onOpenEntity }) {
       .entities({
         type: typeFilter,
         search: debouncedSearch,
-        sort: sortColumn === "balance" ? "balance_desc" : "name_asc",
+        sortBy: sortColumn,
+        sortDir,
         page,
         pageSize: PAGE_SIZE,
       })
@@ -46,14 +48,7 @@ export default function EntitiesView({ tick, onOpenEntity }) {
     };
   }, [typeFilter, debouncedSearch, sortColumn, sortDir, page, tick]);
 
-  function toggleSort(column) {
-    if (sortColumn === column) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortColumn(column);
-      setSortDir("asc");
-    }
-  }
+  const headerProps = { sortColumn, sortDir, onSort: toggleSort };
 
   return (
     <section className="panel entities-panel">
@@ -91,22 +86,12 @@ export default function EntitiesView({ tick, onOpenEntity }) {
         <table>
           <thead>
             <tr>
-              <th
-                className={"sortable" + (sortColumn === "name" ? " sorted" + (sortDir === "asc" ? " asc" : "") : "")}
-                onClick={() => toggleSort("name")}
-              >
-                Name
-              </th>
-              <th>Type</th>
-              <th
-                className={"num sortable" + (sortColumn === "balance" ? " sorted" + (sortDir === "asc" ? " asc" : "") : "")}
-                onClick={() => toggleSort("balance")}
-              >
-                Balance
-              </th>
-              <th className="num">Open Bills</th>
-              <th className="num">Overdue Bills</th>
-              <th>Last Changed</th>
+              <SortableHeader column="name" label="Name" {...headerProps} />
+              <SortableHeader column="type" label="Type" {...headerProps} />
+              <SortableHeader column="balance" label="Balance" numeric {...headerProps} />
+              <SortableHeader column="open_bills" label="Open Bills" numeric {...headerProps} />
+              <SortableHeader column="overdue_bills" label="Overdue Bills" numeric {...headerProps} />
+              <SortableHeader column="last_changed" label="Last Changed" {...headerProps} />
             </tr>
           </thead>
           <tbody>
