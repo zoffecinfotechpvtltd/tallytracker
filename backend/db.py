@@ -99,6 +99,28 @@ CREATE TABLE IF NOT EXISTS sync_errors (
     raw_record TEXT,
     reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS bank_statements (
+    id INTEGER PRIMARY KEY,
+    filename TEXT NOT NULL,
+    uploaded_at TIMESTAMP NOT NULL,
+    row_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bank_transactions (
+    id INTEGER PRIMARY KEY,
+    statement_id INTEGER NOT NULL REFERENCES bank_statements(id),
+    txn_date DATE,
+    narration TEXT NOT NULL,
+    reference TEXT,
+    amount REAL NOT NULL,
+    direction TEXT CHECK(direction IN ('credit','debit')) NOT NULL,
+    matched_entity_id INTEGER REFERENCES entities(id),
+    matched_bill_ref TEXT,
+    match_confidence REAL,
+    match_status TEXT CHECK(match_status IN ('unmatched','confirmed','ignored')) NOT NULL DEFAULT 'unmatched',
+    confirmed_at TIMESTAMP
+);
 """
 
 
@@ -275,6 +297,23 @@ def list_bills_for_entity(conn: sqlite3.Connection, entity_id: int) -> list[sqli
     ).fetchall()
 
 
+def list_bills_due(conn: sqlite3.Connection, entity_type: str) -> list[sqlite3.Row]:
+    """Flat due-list for the Payable/Receivable views: every open/overdue bill for
+    entities of the given type, joined with who it belongs to, soonest-due first.
+    Bills with no known due date sort last, not first - an unknown due date isn't
+    "due now"."""
+    return conn.execute(
+        """
+        SELECT b.*, e.tally_ledger_name AS entity_name, e.id AS entity_id
+        FROM bills b
+        JOIN entities e ON e.id = b.entity_id
+        WHERE e.entity_type = ? AND b.status IN ('open', 'overdue')
+        ORDER BY (b.due_date IS NULL), b.due_date ASC
+        """,
+        (entity_type,),
+    ).fetchall()
+
+
 def count_open_overdue_bills(conn: sqlite3.Connection, entity_id: int) -> tuple[int, int]:
     row = conn.execute(
         """
@@ -426,3 +465,74 @@ def log_sync_error(conn: sqlite3.Connection, context: str, raw_record: str, reas
         "INSERT INTO sync_errors (occurred_at, context, raw_record, reason) VALUES (?, ?, ?, ?)",
         (now_iso(), context, raw_record, reason),
     )
+
+
+# ---------------------------------------------------------------------------
+# Bank reconciliation
+# ---------------------------------------------------------------------------
+
+def create_bank_statement(conn: sqlite3.Connection, filename: str, row_count: int) -> sqlite3.Row:
+    return conn.execute(
+        "INSERT INTO bank_statements (filename, uploaded_at, row_count) VALUES (?, ?, ?) RETURNING *",
+        (filename, now_iso(), row_count),
+    ).fetchone()
+
+
+def add_bank_transaction(
+    conn: sqlite3.Connection, statement_id: int, txn_date: Optional[str], narration: str,
+    reference: Optional[str], amount: float, direction: str,
+    matched_entity_id: Optional[int] = None, matched_bill_ref: Optional[str] = None,
+    match_confidence: Optional[float] = None, match_status: str = "unmatched",
+) -> sqlite3.Row:
+    return conn.execute(
+        """
+        INSERT INTO bank_transactions (
+            statement_id, txn_date, narration, reference, amount, direction,
+            matched_entity_id, matched_bill_ref, match_confidence, match_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *
+        """,
+        (statement_id, txn_date, narration, reference, amount, direction,
+         matched_entity_id, matched_bill_ref, match_confidence, match_status),
+    ).fetchone()
+
+
+def list_bank_transactions(conn: sqlite3.Connection, statement_id: Optional[int] = None) -> list[sqlite3.Row]:
+    if statement_id is not None:
+        return conn.execute(
+            """
+            SELECT bt.*, e.tally_ledger_name AS matched_entity_name
+            FROM bank_transactions bt
+            LEFT JOIN entities e ON e.id = bt.matched_entity_id
+            WHERE bt.statement_id = ?
+            ORDER BY bt.txn_date ASC, bt.id ASC
+            """,
+            (statement_id,),
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT bt.*, e.tally_ledger_name AS matched_entity_name
+        FROM bank_transactions bt
+        LEFT JOIN entities e ON e.id = bt.matched_entity_id
+        ORDER BY bt.txn_date DESC, bt.id DESC
+        """
+    ).fetchall()
+
+
+def get_bank_transaction(conn: sqlite3.Connection, transaction_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute("SELECT * FROM bank_transactions WHERE id = ?", (transaction_id,)).fetchone()
+
+
+def set_bank_transaction_match(
+    conn: sqlite3.Connection, transaction_id: int,
+    matched_entity_id: Optional[int], matched_bill_ref: Optional[str],
+    match_status: str, match_confidence: Optional[float] = None,
+) -> sqlite3.Row:
+    return conn.execute(
+        """
+        UPDATE bank_transactions
+        SET matched_entity_id = ?, matched_bill_ref = ?, match_status = ?,
+            match_confidence = COALESCE(?, match_confidence), confirmed_at = ?
+        WHERE id = ? RETURNING *
+        """,
+        (matched_entity_id, matched_bill_ref, match_status, match_confidence, now_iso(), transaction_id),
+    ).fetchone()

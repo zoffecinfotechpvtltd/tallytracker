@@ -4,17 +4,21 @@ plus a manual /api/refresh that runs Phase 3's exact sync loop.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import threading
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import bank_reconciliation
 import db
 import poller
 import tally_client
@@ -291,6 +295,37 @@ def get_stock(low_stock_only: bool = False, page: int = 1, page_size: int = 50):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/bills-due - flat "who/when/how much" lists for Payable and
+# Receivable views. direction=payable -> vendors you owe; direction=
+# receivable -> customers who owe you. Soonest due first.
+# ---------------------------------------------------------------------------
+
+_DIRECTION_TO_ENTITY_TYPE = {"payable": "vendor", "receivable": "customer"}
+
+
+@app.get("/api/bills-due")
+def get_bills_due(direction: str):
+    if direction not in _DIRECTION_TO_ENTITY_TYPE:
+        raise HTTPException(status_code=400, detail="direction must be 'payable' or 'receivable'")
+    conn = get_conn()
+    with _conn_lock:
+        today = db.now_iso()[:10]
+        rows = db.list_bills_due(conn, _DIRECTION_TO_ENTITY_TYPE[direction])
+        items = []
+        for r in rows:
+            days_until_due = None
+            if r["due_date"]:
+                days_until_due = (date.fromisoformat(r["due_date"]) - date.fromisoformat(today)).days
+            items.append({
+                "entity_id": r["entity_id"], "entity_name": r["entity_name"],
+                "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "due_date": r["due_date"],
+                "amount_outstanding": r["amount_outstanding"], "status": r["status"],
+                "days_until_due": days_until_due,
+            })
+        return envelope(conn, items)
+
+
+# ---------------------------------------------------------------------------
 # GET /api/changes
 # ---------------------------------------------------------------------------
 
@@ -320,6 +355,132 @@ def post_refresh():
             "last_synced_at": result["last_synced_at"],
             "changes_detected": result["changes_detected"],
         }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/stream - Server-Sent Events. Pushes a "sync" event whenever a new
+# snapshot appears (background timer OR /api/refresh, from any client), so the
+# frontend refetches within ~2s of real data changing instead of waiting up to
+# 30s of polling. Heartbeat comments keep the connection alive through proxies.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stream")
+async def stream_updates():
+    async def event_generator():
+        last_snapshot_id = None
+        while True:
+            with _conn_lock:
+                row = get_conn().execute(
+                    "SELECT id FROM snapshots ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            current_id = row["id"] if row else None
+            if current_id != last_snapshot_id:
+                last_snapshot_id = current_id
+                yield f"event: sync\ndata: {current_id}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bank reconciliation - upload an .xlsx bank statement, get fuzzy-matched
+# suggestions against open bills. Nothing here ever touches Tally or a bill's
+# status - purely local tracking, and a suggestion only becomes a real match
+# once the user explicitly confirms it (see bank_reconciliation.py).
+# ---------------------------------------------------------------------------
+
+def _candidate_bills_for_match(conn: sqlite3.Connection, direction: str) -> list[dict]:
+    # A credit into our bank account is a customer paying us (receivable);
+    # a debit is us paying a vendor (payable).
+    entity_type = "customer" if direction == "credit" else "vendor"
+    rows = db.list_bills_due(conn, entity_type)
+    return [{
+        "entity_id": r["entity_id"], "entity_name": r["entity_name"], "bill_ref": r["bill_ref"],
+        "amount_outstanding": r["amount_outstanding"],
+        "due_date": date.fromisoformat(r["due_date"]) if r["due_date"] else None,
+    } for r in rows]
+
+
+@app.post("/api/reconciliation/upload")
+async def upload_bank_statement(file: UploadFile = File(...)):
+    raw = await file.read()
+    try:
+        transactions = bank_reconciliation.parse_bank_statement(raw)
+    except bank_reconciliation.BankStatementError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    conn = get_conn()
+    with _conn_lock:
+        statement = db.create_bank_statement(conn, file.filename or "statement.xlsx", len(transactions))
+        candidates_by_direction = {
+            "credit": _candidate_bills_for_match(conn, "credit"),
+            "debit": _candidate_bills_for_match(conn, "debit"),
+        }
+        for txn in transactions:
+            match = bank_reconciliation.match_transaction(
+                txn["narration"], txn["amount"], txn["date"], candidates_by_direction[txn["direction"]],
+            )
+            db.add_bank_transaction(
+                conn, statement["id"],
+                txn["date"].isoformat() if txn["date"] else None,
+                txn["narration"], txn["reference"], txn["amount"], txn["direction"],
+                matched_entity_id=match["entity_id"] if match else None,
+                matched_bill_ref=match["bill_ref"] if match else None,
+                match_confidence=match["confidence"] if match else None,
+            )
+        conn.commit()
+    return {"statement_id": statement["id"], "row_count": len(transactions)}
+
+
+@app.get("/api/reconciliation/statements")
+def list_bank_statements():
+    conn = get_conn()
+    with _conn_lock:
+        rows = conn.execute("SELECT * FROM bank_statements ORDER BY id DESC").fetchall()
+        return [row_to_dict(r) for r in rows]
+
+
+@app.get("/api/reconciliation/statements/{statement_id}/transactions")
+def get_statement_transactions(statement_id: int):
+    conn = get_conn()
+    with _conn_lock:
+        rows = db.list_bank_transactions(conn, statement_id)
+        return [row_to_dict(r) for r in rows]
+
+
+class ConfirmMatchIn(BaseModel):
+    entity_id: int
+    bill_ref: str
+
+
+@app.post("/api/reconciliation/transactions/{transaction_id}/confirm")
+def confirm_bank_transaction_match(transaction_id: int, body: ConfirmMatchIn):
+    conn = get_conn()
+    with _conn_lock:
+        if db.get_bank_transaction(conn, transaction_id) is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if db.get_entity(conn, body.entity_id) is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        row = db.set_bank_transaction_match(conn, transaction_id, body.entity_id, body.bill_ref, "confirmed")
+        conn.commit()
+        return row_to_dict(row)
+
+
+@app.post("/api/reconciliation/transactions/{transaction_id}/ignore")
+def ignore_bank_transaction(transaction_id: int):
+    conn = get_conn()
+    with _conn_lock:
+        if db.get_bank_transaction(conn, transaction_id) is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        row = db.set_bank_transaction_match(conn, transaction_id, None, None, "ignored")
+        conn.commit()
+        return row_to_dict(row)
 
 
 # ---------------------------------------------------------------------------
