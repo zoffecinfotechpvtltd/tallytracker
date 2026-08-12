@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney, fmtNum } from "../format.js";
 import { useSort } from "../hooks/useSort.js";
+import { downloadCsv } from "../csv.js";
+import { showToast } from "../toast.js";
 import Pager from "./Pager.jsx";
 import SortableHeader from "./SortableHeader.jsx";
 
@@ -34,16 +36,32 @@ export default function StockView({ tick }) {
     };
   }, [lowStockOnly, sortColumn, sortDir, page, tick]);
 
+  async function handleExport() {
+    if (total === 0) return;
+    const envelope = await api.stock({ lowStockOnly, sortBy: sortColumn, sortDir, page: 1, pageSize: 100000 });
+    downloadCsv(
+      `stock-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["Item", "Qty", "Unit", "Value"],
+      envelope.data.map((r) => [r.item_name, r.qty, r.unit, r.value]),
+    );
+    showToast(`Exported ${envelope.data.length} rows`);
+  }
+
   const headerProps = { sortColumn, sortDir, onSort: toggleSort };
 
   return (
     <section className="panel stock-panel">
       <div className="panel-header">
         <h2>Stock</h2>
-        <label className="toggle">
-          <input type="checkbox" checked={lowStockOnly} onChange={(e) => setLowStockOnly(e.target.checked)} />
-          <span>Low stock only</span>
-        </label>
+        <div className="panel-controls">
+          <label className="toggle">
+            <input type="checkbox" checked={lowStockOnly} onChange={(e) => setLowStockOnly(e.target.checked)} />
+            <span>Low stock only</span>
+          </label>
+          <button className="pager-btn" type="button" onClick={handleExport} disabled={total === 0}>
+            Export CSV
+          </button>
+        </div>
       </div>
       <div className="table-wrap">
         <table>

@@ -32,7 +32,7 @@ port 9000).
 
 ```
 cd backend
-python -m uvicorn main:app --host 127.0.0.1 --port 8000
+python -m uvicorn main:app --host 127.0.0.1 --port 8731
 ```
 
 Open http://127.0.0.1:8731/ — the dashboard is served from `frontend/` by
@@ -43,6 +43,10 @@ an offline snapshot and waits for the next tick — and picks up real data
 again on the first poll after Tally is opened, no restart needed. The
 "Refresh now" button / `POST /api/refresh` trigger an immediate sync on
 top of that, same code path.
+
+`GET /api/health` returns `{status, database_ok, tally_reachable,
+last_synced_at}` — a cheap check for whether the server is actually up and
+answering, separate from whether Tally itself is reachable.
 
 ## Run automatically on every login (recommended)
 
@@ -81,9 +85,9 @@ powershell -ExecutionPolicy Bypass -File uninstall_task.ps1
 Per the Master Prompt, phases that touch live Tally can only be fully
 verified against your actual install:
 
-1. **Phase 0** — `python backend/phase0_raw_probe.py` with Tally open.
+1. **Phase 0** — `python backend/tools/phase0_raw_probe.py` with Tally open.
    Confirms connectivity and lets you note ERP 9 vs. TallyPrime.
-2. **Phase 2** — `python backend/test_tally_client.py` with Tally open.
+2. **Phase 2** — `python backend/verify_live_tally.py` with Tally open.
    `tally_client.py` was written from Tally's documented ad-hoc XML
    Collection pattern (no reference `tally_tracker.py` script existed in
    this project to adapt from), so a few tags are informed guesses most
@@ -98,26 +102,47 @@ verified against your actual install:
    `test_poller.py` against fake data — this step proves the real XML
    parsing feeds it correctly).
 
-## Verification scripts (all runnable now, no Tally needed)
+## Automated tests (all runnable now, no Tally needed)
 
 ```
 cd backend
-python test_db.py       # Phase 1 - schema + dedup upserts
-python test_poller.py   # Phase 3 - sync/diff idempotency, offline fake Tally
-python test_api.py      # Phase 4 - API contracts, offline fake Tally
+python -m pip install -r requirements.txt   # includes pytest
+python -m pytest        # runs test_db.py, test_poller.py, test_api.py
 ```
 
-`test_tally_client.py` needs a real, open Tally (see above).
+These also run in CI on every push (`.github/workflows/ci.yml`), alongside
+a frontend build check. `verify_live_tally.py` needs a real, open Tally so
+it isn't part of the automated suite — run it manually (see above).
+
+## Backups
+
+Every poll cycle takes one SQLite backup per calendar day into
+`backend/backups/` (no-op once today's backup already exists), keeping the
+last 14. A backup is also taken automatically right before any future
+schema migration runs against an existing database — see
+`db.py`'s `_MIGRATIONS` / `init_db()`. To restore, stop the server, copy a
+`backend/backups/tally-daily-*.db.bak` file over `backend/tally.db`, and
+restart.
+
+## Schema changes
+
+`db.py` versions the schema (`schema_version` table) instead of editing
+`CREATE TABLE` statements in place. To change the schema, append a new
+`(version, description, sql)` tuple to `_MIGRATIONS` in `db.py` — every
+existing install picks it up automatically on next start (backup-first,
+per above), no manual `ALTER TABLE` required.
 
 ## Layout
 
 ```
 backend/
-  phase0_raw_probe.py       # Phase 0 - throwaway connectivity check
+  tools/
+    phase0_raw_probe.py     # Phase 0 - throwaway connectivity check
+    seed_demo.py            # fake data for previewing the UI without Tally
   db.py                     # Phase 1 - schema, upserts, dedup enforcement
   test_db.py
   tally_client.py            # Phase 2 - the only file that knows Tally's XML tags
-  test_tally_client.py
+  verify_live_tally.py       # manual check against a real, open Tally (not pytest)
   diff_engine.py             # Phase 3 - compares snapshots, writes `changes`
   poller.py                  # Phase 3 - the one sync loop (timer + /api/refresh)
   test_poller.py

@@ -11,7 +11,9 @@ UNIQUE constraint on their natural key, and every write is a single
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -143,9 +145,85 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+# Numbered, one-way migrations. Each entry's script must be safe to run
+# against a fresh DB. Migration 1 is the original `CREATE TABLE IF NOT
+# EXISTS` schema (safe re-run on existing DBs with those tables already
+# present) - it's what every install prior to this versioning scheme is
+# grandfathered into. From here on, schema changes append a new
+# (version, description, script) tuple instead of editing SCHEMA in place,
+# so `python -m pip install -r requirements.txt && python run_server.py`
+# after a `git pull` always leaves the DB in the shape the current code
+# expects, with no manual ALTER TABLE required.
+_MIGRATIONS: list[tuple[int, str, str]] = [
+    (1, "baseline schema", SCHEMA),
+]
+
+
+def _current_schema_version(conn: sqlite3.Connection) -> int:
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO schema_version (version) VALUES (0)")
+        conn.commit()
+        return 0
+    return row["version"]
+
+
+def _db_file_path(conn: sqlite3.Connection) -> Optional[str]:
+    """The on-disk path sqlite opened this connection with, or None for an
+    in-memory database (nothing to back up)."""
+    row = conn.execute("PRAGMA database_list").fetchone()
+    path = row["file"] if row else None
+    return path or None
+
+
+def backup_database(db_path: str, backup_dir: str, keep: int = 14, label: str = "") -> Optional[str]:
+    """Copies db_path into backup_dir as a timestamped snapshot, then prunes
+    down to the `keep` most recent backups. Returns the new backup's path, or
+    None if db_path doesn't exist yet (nothing to protect)."""
+    if not os.path.exists(db_path):
+        return None
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = f"-{label}" if label else ""
+    dest = os.path.join(backup_dir, f"tally{suffix}-{stamp}.db.bak")
+    shutil.copy2(db_path, dest)
+
+    backups = sorted(f for f in os.listdir(backup_dir) if f.startswith("tally") and f.endswith(".db.bak"))
+    for old in backups[:-keep]:
+        os.remove(os.path.join(backup_dir, old))
+    return dest
+
+
+def maybe_daily_backup(conn: sqlite3.Connection, keep: int = 14) -> Optional[str]:
+    """Takes one backup per calendar day - safe to call on every poll cycle,
+    it's a no-op once today's backup already exists."""
+    db_path = _db_file_path(conn)
+    if not db_path:
+        return None
+    backup_dir = os.path.join(os.path.dirname(db_path) or ".", "backups")
+    today = datetime.now().strftime("%Y%m%d")
+    if os.path.isdir(backup_dir) and any(f"-daily-{today}" in f for f in os.listdir(backup_dir)):
+        return None
+    return backup_database(db_path, backup_dir, keep=keep, label="daily")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
-    conn.commit()
+    current = _current_schema_version(conn)
+    pending = [m for m in _MIGRATIONS if m[0] > current]
+
+    # Back up before any real (non-baseline) migration touches an existing
+    # database - `current > 0` means this DB has already been through the
+    # versioning scheme at least once, so it's not a brand-new empty file.
+    if pending and current > 0:
+        db_path = _db_file_path(conn)
+        if db_path:
+            backup_database(db_path, os.path.join(os.path.dirname(db_path) or ".", "backups"), label="pre-migration")
+
+    for version, _description, script in pending:
+        conn.executescript(script)
+        conn.execute("UPDATE schema_version SET version = ?", (version,))
+        conn.commit()
 
 
 @contextmanager

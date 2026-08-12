@@ -7,6 +7,7 @@ function, there is only one sync code path in the whole app.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -17,6 +18,8 @@ import db
 import diff_engine
 import tally_client
 from config import settings
+
+logger = logging.getLogger("tallytracker.poller")
 
 _sync_lock = threading.Lock()
 
@@ -38,11 +41,12 @@ def _fetch_all(poll_ts: str) -> tuple[list, list, list, list]:
         raw_stock = tally_client.fetch_stock_summary()
         if raw_tb or attempt == _EMPTY_RESULT_MAX_ATTEMPTS:
             if attempt > 1:
-                print(f"[poller] {poll_ts} recovered on attempt {attempt}" if raw_tb
-                      else f"[poller] {poll_ts} still empty after {attempt} attempts, giving up this cycle",
-                      flush=True)
+                if raw_tb:
+                    logger.info("%s recovered on attempt %d", poll_ts, attempt)
+                else:
+                    logger.warning("%s still empty after %d attempts, giving up this cycle", poll_ts, attempt)
             return raw_tb, raw_bills_r, raw_bills_p, raw_stock
-        print(f"[poller] {poll_ts} attempt {attempt} came back empty, retrying...", flush=True)
+        logger.info("%s attempt %d came back empty, retrying...", poll_ts, attempt)
         time.sleep(_EMPTY_RESULT_RETRY_DELAY_S)
     raise AssertionError("unreachable")
 
@@ -111,6 +115,11 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
     with _sync_lock:
         poll_ts = db.now_iso()
 
+        try:
+            db.maybe_daily_backup(conn)
+        except OSError as e:
+            logger.warning("daily backup failed: %s", e)
+
         if not tally_client.check_tally_alive():
             snap = db.create_snapshot(conn, tally_reachable=False, taken_at=poll_ts)
             conn.commit()
@@ -121,18 +130,17 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
 
         try:
             raw_tb, raw_bills_r, raw_bills_p, raw_stock = _fetch_all(poll_ts)
-            print(
-                f"[poller] {poll_ts} fetched: trial_balance={len(raw_tb)} "
-                f"bills_receivable={len(raw_bills_r)} bills_payable={len(raw_bills_p)} "
-                f"stock={len(raw_stock)} company={settings.tally.company_name!r}",
-                flush=True,
+            logger.info(
+                "%s fetched: trial_balance=%d bills_receivable=%d bills_payable=%d stock=%d company=%r",
+                poll_ts, len(raw_tb), len(raw_bills_r), len(raw_bills_p), len(raw_stock),
+                settings.tally.company_name,
             )
         except Exception as e:
             # Broad on purpose: this boundary talks to an external app (Tally) we
             # don't control. Anything going wrong here should degrade to "mark
             # unreachable, log it, try again next cycle" - never a raw 500 to
             # /api/refresh's caller or a dead background loop.
-            print(f"[poller] {poll_ts} fetch failed ({type(e).__name__}): {e}", flush=True)
+            logger.error("%s fetch failed (%s): %s", poll_ts, type(e).__name__, e)
             snap = db.create_snapshot(conn, tally_reachable=False, taken_at=poll_ts)
             conn.commit()
             return {
@@ -198,14 +206,3 @@ def run_sync_cycle(conn: sqlite3.Connection) -> dict:
             "tally_reachable": True, "last_synced_at": snapshot["taken_at"],
             "changes_detected": len(changes), "snapshot_id": snapshot["id"],
         }
-
-
-def run_forever(conn: sqlite3.Connection) -> None:
-    """Background timer loop - default every settings.polling.interval_minutes."""
-    import time
-    while True:
-        try:
-            run_sync_cycle(conn)
-        except Exception as e:
-            print(f"[poller] sync cycle failed: {e}")
-        time.sleep(settings.polling.interval_minutes * 60)

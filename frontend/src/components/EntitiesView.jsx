@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { fmtMoney, relativeTime } from "../format.js";
 import { useSort } from "../hooks/useSort.js";
+import { downloadCsv } from "../csv.js";
+import { showToast } from "../toast.js";
 import Pager from "./Pager.jsx";
 import SortableHeader from "./SortableHeader.jsx";
 
@@ -48,6 +50,21 @@ export default function EntitiesView({ tick, onOpenEntity }) {
     };
   }, [typeFilter, debouncedSearch, sortColumn, sortDir, page, tick]);
 
+  async function handleExport() {
+    if (total === 0) return;
+    const envelope = await api.entities({
+      type: typeFilter, search: debouncedSearch, sortBy: sortColumn, sortDir, page: 1, pageSize: 100000,
+    });
+    downloadCsv(
+      `entities-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["Name", "Type", "Balance", "Balance Type", "Open Bills", "Overdue Bills", "Last Changed"],
+      envelope.data.map((r) => [
+        r.name, r.type, r.current_balance, r.balance_type, r.open_bill_count, r.overdue_bill_count, r.last_changed_at,
+      ]),
+    );
+    showToast(`Exported ${envelope.data.length} rows`);
+  }
+
   const headerProps = { sortColumn, sortDir, onSort: toggleSort };
 
   return (
@@ -80,6 +97,9 @@ export default function EntitiesView({ tick, onOpenEntity }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <button className="pager-btn" type="button" onClick={handleExport} disabled={total === 0}>
+            Export CSV
+          </button>
         </div>
       </div>
       <div className="table-wrap">

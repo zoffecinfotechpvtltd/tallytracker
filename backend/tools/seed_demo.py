@@ -4,7 +4,7 @@ Populates backend/tally.db with fake entities/bills/stock, deliberately
 including two different customers that both use invoice ref "INV-001" -
 proves entity segregation (same ref, different party, no collision).
 
-Run:  python seed_demo.py
+Run (from backend/):  python tools/seed_demo.py
 Clear afterwards: stop the server, delete backend/tally.db, restart
 (a fresh empty DB is recreated automatically).
 """
@@ -14,7 +14,9 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-DB_PATH = "tally.db"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tally.db")
 if os.path.exists(DB_PATH):
     os.remove(DB_PATH)
 

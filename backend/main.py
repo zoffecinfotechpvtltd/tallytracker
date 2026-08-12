@@ -5,6 +5,7 @@ plus a manual /api/refresh that runs Phase 3's exact sync loop.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sqlite3
 import threading
@@ -23,6 +24,12 @@ import db
 import poller
 import tally_client
 from config import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("tallytracker.main")
 
 _conn_lock = threading.Lock()
 
@@ -47,7 +54,7 @@ async def lifespan(app: FastAPI):
             try:
                 poller.run_sync_cycle(conn)
             except Exception as e:
-                print(f"[poller] sync cycle failed: {e}")
+                logger.error("background sync cycle failed: %s", e)
             stop_event.wait(settings.polling.interval_minutes * 60)
 
     thread = threading.Thread(target=_background_loop, daemon=True)
@@ -60,8 +67,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Tally Live Entity Dashboard", lifespan=lifespan)
+# The browser only ever talks to one origin - either the Vite dev server
+# (which proxies /api straight through, see vite.config.js) or this app's
+# own StaticFiles mount in production - so cross-origin requests aren't part
+# of the normal flow. Scoped to loopback dev ports rather than "*" so the
+# app doesn't accept arbitrary-origin browser requests if it's ever reachable
+# beyond localhost.
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -93,6 +109,30 @@ def _paginate(items: list, page: int, page_size: int) -> tuple[list, int]:
     page_size = max(page_size, 1)
     start = (page - 1) * page_size
     return items[start:start + page_size], len(items)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/health - cheap liveness/readiness check for external monitoring
+# (Task Scheduler restarts the process on crash, but nothing external polls
+# whether it's actually serving - this endpoint gives something to poll).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/health")
+def get_health():
+    conn = get_conn()
+    with _conn_lock:
+        try:
+            conn.execute("SELECT 1").fetchone()
+            db_ok = True
+        except sqlite3.Error:
+            db_ok = False
+        reachable, last_synced_at = latest_sync_status(conn)
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database_ok": db_ok,
+        "tally_reachable": reachable,
+        "last_synced_at": last_synced_at,
+    }
 
 
 # ---------------------------------------------------------------------------
