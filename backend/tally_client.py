@@ -353,22 +353,49 @@ def _fetch_bills(group_name: str) -> list[dict]:
     return results
 
 
+_TALLY_JD_EPOCH = date(1899, 12, 30)  # UNVERIFIED against real data - see _julian_day_to_date()
+
+
+def _julian_day_to_date(jd_raw: Optional[str]) -> Optional[date]:
+    """Confirmed against real data: BILLCREDITPERIOD often carries TYPE="Due Date"
+    with an EMPTY text value and the real due date encoded only in a JD="..."
+    attribute (a serial day count), not in the element text at all - same shape
+    of bug as ledger names living in an attribute instead of a child element.
+    The epoch here (1899-12-30, the common Excel/Lotus spreadsheet-serial
+    convention) is a best guess, NOT yet confirmed against this install: run
+    test_tally_client.py, pick one bill whose due date you can see in Tally's
+    own UI, and compare - adjust _TALLY_JD_EPOCH by the day count difference if
+    it's off. Never used to silently produce a wrong date without this check."""
+    try:
+        return _TALLY_JD_EPOCH + timedelta(days=int(jd_raw))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _extract_bill_dates(bill_elem: ET.Element) -> tuple[Optional[date], Optional[date]]:
     """BillAllocations doesn't always carry an explicit bill date; Tally derives it
     from the originating voucher, which raw ledger-collection export doesn't expose.
-    BILLCREDITPERIOD's raw text is either a plain integer (days of credit) or an
-    explicit date (when the bill was configured with a fixed due date) - handle both."""
+    BILLCREDITPERIOD can show up three ways depending on how the bill's credit
+    terms were configured: a JD-attribute-encoded due date (see
+    _julian_day_to_date), a plain integer in the text (days of credit, add to
+    bill_date), or an explicit date string in the text - handle all three."""
     bill_date = _parse_tally_date(_first_text(bill_elem, "BILLDATE"))
-    credit_raw = _first_text(bill_elem, "BILLCREDITPERIOD")
+    credit_elem = bill_elem.find("BILLCREDITPERIOD")
     due_date: Optional[date] = None
-    if credit_raw:
-        as_date = _parse_tally_date(credit_raw)
-        if as_date is not None:
-            due_date = as_date
+    if credit_elem is not None:
+        jd_raw = credit_elem.get("JD")
+        if credit_elem.get("TYPE") == "Due Date" and jd_raw:
+            due_date = _julian_day_to_date(jd_raw)
         else:
-            digits = re.search(r"\d+", credit_raw)
-            if digits and bill_date is not None:
-                due_date = bill_date + timedelta(days=int(digits.group()))
+            credit_raw = _text(credit_elem)
+            if credit_raw:
+                as_date = _parse_tally_date(credit_raw)
+                if as_date is not None:
+                    due_date = as_date
+                else:
+                    digits = re.search(r"\d+", credit_raw)
+                    if digits and bill_date is not None:
+                        due_date = bill_date + timedelta(days=int(digits.group()))
     return bill_date, due_date
 
 
