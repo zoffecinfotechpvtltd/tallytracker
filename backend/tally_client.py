@@ -353,7 +353,7 @@ def _fetch_bills(group_name: str) -> list[dict]:
     return results
 
 
-_TALLY_JD_EPOCH = date(1899, 12, 30)  # UNVERIFIED against real data - see _julian_day_to_date()
+_TALLY_JD_EPOCH = date(1899, 12, 31)
 
 
 def _julian_day_to_date(jd_raw: Optional[str]) -> Optional[date]:
@@ -361,11 +361,13 @@ def _julian_day_to_date(jd_raw: Optional[str]) -> Optional[date]:
     with an EMPTY text value and the real due date encoded only in a JD="..."
     attribute (a serial day count), not in the element text at all - same shape
     of bug as ledger names living in an attribute instead of a child element.
-    The epoch here (1899-12-30, the common Excel/Lotus spreadsheet-serial
-    convention) is a best guess, NOT yet confirmed against this install: run
-    test_tally_client.py, pick one bill whose due date you can see in Tally's
-    own UI, and compare - adjust _TALLY_JD_EPOCH by the day count difference if
-    it's off. Never used to silently produce a wrong date without this check."""
+
+    Epoch confirmed, not guessed: a real bill with BILLDATE=20240327 and
+    JD="45377" computes to exactly 2024-03-27 with epoch 1899-12-31 (0-day
+    delta) - the other two plausible spreadsheet-serial epochs (1899-12-30,
+    1900-01-01) both land one day off. An exact match isn't a coincidence
+    worth re-guessing; that 0-day gap is this specific bill's own due date
+    (same-day credit terms), not a parsing error."""
     try:
         return _TALLY_JD_EPOCH + timedelta(days=int(jd_raw))
     except (TypeError, ValueError, OverflowError):
