@@ -1,4 +1,5 @@
 import { relativeTime } from "../format.js";
+import ThemeToggle from "./ThemeToggle.jsx";
 
 export default function Header({ syncInfo, live, onRefresh, refreshing }) {
   const offline = syncInfo ? !syncInfo.tally_reachable : false;
@@ -21,6 +22,7 @@ export default function Header({ syncInfo, live, onRefresh, refreshing }) {
             {live && !offline ? " · live" : ""}
           </span>
         </div>
+        <ThemeToggle />
         <button className="btn-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
           {refreshing ? "Syncing…" : "Refresh now"}
         </button>

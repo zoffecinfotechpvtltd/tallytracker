@@ -29,31 +29,68 @@
   --font-display: "Fraunces", Georgia, serif;
   --font-ui: "Inter", -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  color-scheme: light;
 }
 
+/* Dark tokens are defined twice on purpose: once behind the OS-preference
+   media query (for a visitor who never touched the toggle) and once behind
+   an explicit [data-theme="dark"] attribute (set by ThemeToggle.jsx, wins
+   regardless of OS preference). :not([data-theme="light"]) in the media
+   query stops an explicit light choice from being clobbered by a dark OS
+   preference. Deeper/richer than a flat inversion of the light palette -
+   more separation between surface/surface-2 so panels read as elevated,
+   not just "light colors with the values flipped." */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #10162a;
-    --surface: #1a2338;
-    --surface-2: #212b43;
+  :root:not([data-theme="light"]) {
+    --bg: #0d1220;
+    --surface: #171f34;
+    --surface-2: #1c2740;
     --ink: #f2efe6;
-    --ink-soft: #b5bccd;
-    --ink-faint: #7b8398;
+    --ink-soft: #aab3c8;
+    --ink-faint: #707a92;
 
-    --border: rgba(245, 241, 232, 0.09);
-    --border-strong: rgba(245, 241, 232, 0.16);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.16);
 
     --sage: #8fc29a;
-    --sage-bg: rgba(143, 194, 154, 0.15);
+    --sage-bg: rgba(143, 194, 154, 0.16);
     --copper: #e4a465;
-    --copper-bg: rgba(228, 164, 101, 0.16);
+    --copper-bg: rgba(228, 164, 101, 0.17);
     --red: #e08080;
-    --red-bg: rgba(224, 128, 128, 0.16);
+    --red-bg: rgba(224, 128, 128, 0.17);
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.35);
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1220;
+  --surface: #171f34;
+  --surface-2: #1c2740;
+  --ink: #f2efe6;
+  --ink-soft: #aab3c8;
+  --ink-faint: #707a92;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --sage: #8fc29a;
+  --sage-bg: rgba(143, 194, 154, 0.16);
+  --copper: #e4a465;
+  --copper-bg: rgba(228, 164, 101, 0.17);
+  --red: #e08080;
+  --red-bg: rgba(224, 128, 128, 0.17);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -67,7 +104,16 @@ html, body, #root {
   font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
+
+/* Panels/surfaces that don't already declare their own transition get a
+   gentle cross-fade when the theme toggle flips CSS variable values -
+   without this the switch is an instant, jarring cut. */
+.panel, .tile, .ledger-header, .detail-panel, .margin-notes, .offline-banner {
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.sidebar { transition: width 0.18s ease, background-color 0.25s ease, border-color 0.25s ease; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
@@ -102,6 +148,38 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 @keyframes livepulse {
   0%, 100% { box-shadow: 0 0 0 3px var(--sage-bg); }
   50% { box-shadow: 0 0 0 6px var(--sage-bg); }
+}
+
+/* ---------- Theme toggle ---------- */
+
+.theme-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex-shrink: 0;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink-soft);
+  border-radius: 999px; cursor: pointer; padding: 0;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.theme-toggle:hover { background: var(--surface-2); color: var(--ink); border-color: var(--copper); }
+
+.theme-toggle-icon .theme-toggle-sun,
+.theme-toggle-icon .theme-toggle-rays {
+  transform-origin: 12px 12px;
+  transition: opacity 0.3s ease, transform 0.4s ease;
+}
+.theme-toggle-icon .theme-toggle-moon {
+  transform-origin: 12px 12px;
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+  transition: opacity 0.3s ease, transform 0.4s ease;
+}
+.theme-toggle-icon.is-dark .theme-toggle-sun,
+.theme-toggle-icon.is-dark .theme-toggle-rays {
+  opacity: 0;
+  transform: scale(0.3) rotate(90deg);
+}
+.theme-toggle-icon.is-dark .theme-toggle-moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
 }
 
 .btn-refresh {
