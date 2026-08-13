@@ -1,7 +1,8 @@
 """
-Throwaway diagnostic - not part of the app. Dumps the raw BILLALLOCATIONS.LIST
-Tally returns for one specific ledger, so we can see exactly which bills
-Tally's ad-hoc export includes/excludes without guessing.
+Throwaway diagnostic - not part of the app. Shows what _fetch_bills() would
+actually return for one ledger, split by source (ledger-master opening-
+balance snapshot vs. voucher-scan), so we can see exactly which bills come
+from where without guessing.
 
 Run (from backend/):  python tools/debug_ledger_bills.py "D A TECHNOLOGIES"
 """
@@ -10,44 +11,32 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import xml.etree.ElementTree as ET
-
 import tally_client as tc
 
 LEDGER_NAME = sys.argv[1] if len(sys.argv) > 1 else "D A TECHNOLOGIES"
+target = tc._normalize_name(LEDGER_NAME)
 
 for group_name in (tc.PAYABLE_GROUP, tc.RECEIVABLE_GROUP):
     print(f"\n{'=' * 70}\nGroup: {group_name}\n{'=' * 70}")
-    req = tc._adhoc_collection_request(
-        "TTBillsDebug",
-        "Ledger",
-        [
-            "NAME", "PARENT",
-            "BILLALLOCATIONS.NAME",
-            "BILLALLOCATIONS.BILLTYPE",
-            "BILLALLOCATIONS.BILLCREDITPERIOD",
-            "BILLALLOCATIONS.OPENINGBALANCE",
-            "BILLALLOCATIONS.CLOSINGBALANCE",
-        ],
-        filter_expr=f'$Parent = "{group_name}"',
-    )
-    raw = tc._post(req)
-    root = tc._parse_xml(raw)
 
-    found = False
-    for led in root.iter("LEDGER"):
-        name = tc._object_name(led)
-        if not name or tc._normalize_name(name) != tc._normalize_name(LEDGER_NAME):
-            continue
-        found = True
-        parent = led.get("PARENT") or led.findtext("PARENT") or ""
-        print(f"Ledger matched: {name!r} (parent={parent!r})")
-        bill_lists = led.findall("BILLALLOCATIONS.LIST")
-        print(f"BILLALLOCATIONS.LIST count: {len(bill_lists)}")
-        for i, bill in enumerate(bill_lists):
-            print(f"\n--- bill #{i} raw XML ---")
-            print(ET.tostring(bill, encoding="unicode"))
-    if not found:
-        print(f"No ledger named {LEDGER_NAME!r} found under this group's export.")
+    group_ledgers = tc._fetch_group_ledger_names(group_name)
+    matches = [n for n in group_ledgers if tc._normalize_name(n) == target]
+    if not matches:
+        print(f"No ledger named {LEDGER_NAME!r} under this group.")
+        continue
+    print(f"Ledger found under this group: {matches[0]!r}")
 
-print(f"\n\nTotal raw response length for last group: {len(raw)} chars")
+    full = tc._fetch_bills(group_name)
+    mine = [b for b in full if tc._normalize_name(b["ledger_name"]) == target]
+    mine.sort(key=lambda b: b["bill_date"] or __import__("datetime").date.min)
+
+    print(f"\n_fetch_bills() total rows for this ledger: {len(mine)}\n")
+    for b in mine:
+        print(
+            f"  {b['bill_date']}  {b['bill_ref']:<20}  "
+            f"due={b['due_date']}  amount={b['amount_outstanding']:>12,.2f}"
+        )
+
+    if mine:
+        years = sorted({b["bill_date"].year for b in mine if b["bill_date"]})
+        print(f"\nYears present: {years}")

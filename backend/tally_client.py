@@ -332,6 +332,79 @@ def fetch_trial_balance() -> list[dict]:
     return results
 
 
+def _fetch_group_ledger_names(group_name: str) -> set[str]:
+    """Lightweight NAME/PARENT-only ledger listing for one chart-of-accounts
+    group - just which ledgers belong to it, no bill data. Used to scope the
+    voucher scan below to the right ledgers, since a fresh vendor/customer
+    added only after a company split (see _fetch_bills) may never appear in
+    the ledger-master bill list at all."""
+    req = _adhoc_collection_request(
+        "TTGroupLedgersX2", "Ledger", ["NAME", "PARENT"],
+        filter_expr=f"$Parent = \"{group_name}\"",
+    )
+    raw = _post(req)
+    root = _parse_xml(raw)
+    return {_object_name(led) for led in root.iter("LEDGER") if _object_name(led)}
+
+
+def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
+    """A Ledger master's BILLALLOCATIONS.LIST only holds the OPENING-balance
+    bill-wise snapshot, not bills attached to vouchers entered afterward -
+    confirmed against a real split company where the ledger master returned
+    only pre-split carried-forward bills and nothing newer, even with
+    SVFROMDATE/SVTODATE/SVCURRENTDATE all explicitly widened (see
+    _as_of_today_static_vars - none of that changed the response at all,
+    because the split's post-cutoff bills simply aren't part of that object).
+    Tally's own Outstanding report works because it scans vouchers instead of
+    the ledger master, so this does the same: every voucher's bill
+    allocations, summed per (ledger, bill_ref) - same wide-range static vars
+    already proven to work for voucher-type collections in
+    fetch_vouchers_for_ledger.
+
+    Returns { (ledger_name, bill_ref): {"bill_date": date|None, "net_amount": float} }.
+    net_amount is the signed sum of every allocation against that bill ref
+    (new bill + any later part-payments netted in); a bill fully settled
+    nets to ~0 and the caller filters it out."""
+    req = _adhoc_collection_request(
+        "TTVoucherBillsX2", "Voucher",
+        [
+            "DATE",
+            "ALLLEDGERENTRIES.LEDGERNAME",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
+            "ALLLEDGERENTRIES.BILLALLOCATIONS.AMOUNT",
+        ],
+        extra_static_vars=_as_of_today_static_vars(),
+    )
+    root = None
+    for attempt in range(1, 4):
+        raw = _post(req)
+        root = _parse_xml(raw)
+        if any(True for _ in root.iter("VOUCHER")) or attempt == 3:
+            break
+        time.sleep(2.0)
+
+    bills: dict[tuple[str, str], dict] = {}
+    for v in root.iter("VOUCHER"):
+        v_date = _parse_tally_date(_first_text(v, "DATE"))
+        for entry in v.findall("ALLLEDGERENTRIES.LIST"):
+            ledger_name = _first_text(entry, "LEDGERNAME")
+            if not ledger_name:
+                continue
+            for bill in entry.findall("BILLALLOCATIONS.LIST"):
+                bill_ref = _first_text(bill, "NAME")
+                if not bill_ref:
+                    continue
+                amount = _parse_amount(_first_text(bill, "AMOUNT"))
+                key = (ledger_name, bill_ref)
+                rec = bills.setdefault(key, {"bill_date": None, "net_amount": 0.0})
+                rec["net_amount"] += amount
+                bill_type = _first_text(bill, "BILLTYPE") or ""
+                if bill_type == "New Ref" or rec["bill_date"] is None:
+                    rec["bill_date"] = v_date
+    return bills
+
+
 def _fetch_bills(group_name: str) -> list[dict]:
     req = _adhoc_collection_request(
         "TTBillsX2",
@@ -350,6 +423,7 @@ def _fetch_bills(group_name: str) -> list[dict]:
     root = _parse_xml(raw)
 
     results: list[dict] = []
+    seen_refs: set[tuple[str, str]] = set()
     for led in root.iter("LEDGER"):
         ledger_name = _object_name(led)
         if not ledger_name:
@@ -378,6 +452,34 @@ def _fetch_bills(group_name: str) -> list[dict]:
                 "original_amount": abs(original),
                 "amount_outstanding": abs(original),
             })
+            seen_refs.add((ledger_name, bill_ref))
+
+    # Ledger-master bills above only ever cover the opening-balance snapshot
+    # (pre-split/pre-company-start carried-forward bills). Anything raised via
+    # an actual voucher - which, for most installs, is every currently active
+    # bill - has to come from scanning vouchers directly instead.
+    group_ledgers = _fetch_group_ledger_names(group_name)
+    for (ledger_name, bill_ref), rec in _fetch_bill_refs_from_vouchers().items():
+        if ledger_name not in group_ledgers:
+            continue
+        if (ledger_name, bill_ref) in seen_refs:
+            continue  # already have this one from the ledger-master pass
+        net = rec["net_amount"]
+        if abs(net) < 0.5:
+            continue  # fully settled (new bill + its payment(s) net to ~0) - not open
+        bill_date = rec["bill_date"]
+        due_date = (
+            bill_date + timedelta(days=settings.billing.default_credit_days)
+            if bill_date is not None else None
+        )
+        results.append({
+            "ledger_name": ledger_name,
+            "bill_ref": bill_ref,
+            "bill_date": bill_date,
+            "due_date": due_date,
+            "original_amount": abs(net),
+            "amount_outstanding": abs(net),
+        })
     return results
 
 
