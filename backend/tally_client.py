@@ -291,15 +291,29 @@ def _adhoc_collection_request(collection_name: str, obj_type: str, fetch_fields:
 </ENVELOPE>"""
 
 
+def _as_of_today_static_vars() -> str:
+    """Ledger/master-style exports (closing balances, bill-wise outstanding)
+    are computed "as of" Tally's SVCURRENTDATE, not the SVFROMDATE/SVTODATE
+    range used by voucher-register-style reports. Leaving SVCURRENTDATE unset
+    lets Tally default it to the company's books-beginning date - confirmed
+    against a real split company where every bill after the split date (i.e.
+    everything from the split forward) was silently excluded until this was
+    added, even though SVFROMDATE/SVTODATE were already wide open. Setting it
+    explicitly to today is what actually makes "as of now" mean now."""
+    today = date.today().strftime("%Y%m%d")
+    tomorrow = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+    return (
+        f'<SVCURRENTDATE TYPE="Date">{today}</SVCURRENTDATE>'
+        f'<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
+        f'<SVTODATE TYPE="Date">{tomorrow}</SVTODATE>'
+    )
+
+
 def fetch_trial_balance() -> list[dict]:
     """Returns: [{ "ledger_name": str, "balance": float, "balance_type": "Dr"|"Cr" }, ...]"""
-    wide_range = (
-        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
-        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
-    )
     req = _adhoc_collection_request(
         "TTLedgersX2", "Ledger", ["NAME", "PARENT", "CLOSINGBALANCE"],
-        extra_static_vars=wide_range,
+        extra_static_vars=_as_of_today_static_vars(),
     )
     raw = _post(req)
     root = _parse_xml(raw)
@@ -319,15 +333,6 @@ def fetch_trial_balance() -> list[dict]:
 
 
 def _fetch_bills(group_name: str) -> list[dict]:
-    # Ledger master exports are implicitly scoped to whatever "Current Period"
-    # is set inside the Tally UI (F2/Alter Period) - if that's stuck on an old
-    # financial year, bills raised since then silently never come back, even
-    # though the ledger itself is up to date. Pin an explicit wide range so
-    # this doesn't depend on whatever period Tally happens to have open.
-    wide_range = (
-        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
-        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
-    )
     req = _adhoc_collection_request(
         "TTBillsX2",
         "Ledger",
@@ -337,10 +342,9 @@ def _fetch_bills(group_name: str) -> list[dict]:
             "BILLALLOCATIONS.BILLTYPE",
             "BILLALLOCATIONS.BILLCREDITPERIOD",
             "BILLALLOCATIONS.OPENINGBALANCE",
-            "BILLALLOCATIONS.CLOSINGBALANCE",
         ],
         filter_expr=f"$Parent = \"{group_name}\"",
-        extra_static_vars=wide_range,
+        extra_static_vars=_as_of_today_static_vars(),
     )
     raw = _post(req)
     root = _parse_xml(raw)
@@ -356,14 +360,23 @@ def _fetch_bills(group_name: str) -> list[dict]:
             bill_ref = _first_text(bill, "NAME")
             bill_date, due_date = _extract_bill_dates(bill)
             original = _parse_amount(_first_text(bill, "OPENINGBALANCE"))
-            outstanding = _parse_amount(_first_text(bill, "CLOSINGBALANCE"))
+            # BILLALLOCATIONS.CLOSINGBALANCE is NOT reliable per-bill via this
+            # export shape - confirmed against real data where every bill on a
+            # ledger came back with the identical value, matching that
+            # ledger's own overall running balance rather than each bill's
+            # individual remaining amount (Tally appears to resolve the field
+            # name against the parent Ledger object instead of the nested
+            # bill). OPENINGBALANCE does vary correctly per bill, so use that
+            # for both fields - it slightly overstates a bill that's been
+            # partially paid down, but that's a far smaller error than the
+            # ledger-wide total CLOSINGBALANCE was substituting in.
             results.append({
                 "ledger_name": ledger_name,
                 "bill_ref": bill_ref,
                 "bill_date": bill_date,
                 "due_date": due_date,
-                "original_amount": abs(original) if original else abs(outstanding),
-                "amount_outstanding": abs(outstanding),
+                "original_amount": abs(original),
+                "amount_outstanding": abs(original),
             })
     return results
 
@@ -445,14 +458,10 @@ def fetch_bills_payable() -> list[dict]:
 
 def fetch_stock_summary() -> list[dict]:
     """Returns: [{ "item_name": str, "qty": float, "unit": str, "value": float }, ...]"""
-    wide_range = (
-        '<SVFROMDATE TYPE="Date">20000101</SVFROMDATE>'
-        f'<SVTODATE TYPE="Date">{(date.today() + timedelta(days=1)).strftime("%Y%m%d")}</SVTODATE>'
-    )
     req = _adhoc_collection_request(
         "TTStockX2", "StockItem",
         ["NAME", "BASEUNITS", "CLOSINGBALANCE", "CLOSINGVALUE"],
-        extra_static_vars=wide_range,
+        extra_static_vars=_as_of_today_static_vars(),
     )
     raw = _post(req)
     root = _parse_xml(raw)
