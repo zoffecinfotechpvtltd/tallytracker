@@ -347,6 +347,9 @@ def _fetch_group_ledger_names(group_name: str) -> set[str]:
     return {_object_name(led) for led in root.iter("LEDGER") if _object_name(led)}
 
 
+_voucher_bills_cache: dict = {"ts": 0.0, "data": None}
+
+
 def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
     """A Ledger master's BILLALLOCATIONS.LIST only holds the OPENING-balance
     bill-wise snapshot, not bills attached to vouchers entered afterward -
@@ -364,7 +367,16 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
     Returns { (ledger_name, bill_ref): {"bill_date": date|None, "net_amount": float} }.
     net_amount is the signed sum of every allocation against that bill ref
     (new bill + any later part-payments netted in); a bill fully settled
-    nets to ~0 and the caller filters it out."""
+    nets to ~0 and the caller filters it out.
+
+    Company-wide and deeply nested, so a lot slower than the other fetches
+    here - confirmed against real data that Tally can take well over 10s to
+    compute it, hence the longer timeout below (a background sync cycle
+    every few minutes has room for that; it's not user-facing latency)."""
+    cached = _voucher_bills_cache.get("data")
+    if cached is not None and (time.time() - _voucher_bills_cache["ts"]) < 30:
+        return cached
+
     req = _adhoc_collection_request(
         "TTVoucherBillsX2", "Voucher",
         [
@@ -377,10 +389,10 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
         extra_static_vars=_as_of_today_static_vars(),
     )
     root = None
-    for attempt in range(1, 4):
-        raw = _post(req)
+    for attempt in range(1, 3):
+        raw = _post(req, timeout_s=90.0)
         root = _parse_xml(raw)
-        if any(True for _ in root.iter("VOUCHER")) or attempt == 3:
+        if any(True for _ in root.iter("VOUCHER")) or attempt == 2:
             break
         time.sleep(2.0)
 
@@ -402,6 +414,8 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
                 bill_type = _first_text(bill, "BILLTYPE") or ""
                 if bill_type == "New Ref" or rec["bill_date"] is None:
                     rec["bill_date"] = v_date
+    _voucher_bills_cache["ts"] = time.time()
+    _voucher_bills_cache["data"] = bills
     return bills
 
 
