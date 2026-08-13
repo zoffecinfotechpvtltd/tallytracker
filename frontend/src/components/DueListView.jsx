@@ -23,7 +23,9 @@ const COPY = {
 };
 
 export default function DueListView({ direction, tick, onOpenEntity }) {
-  const { sortColumn, sortDir, toggleSort } = useSort("due");
+  const { sortColumn, sortDir, toggleSort } = useSort("bill_date", "desc");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -32,13 +34,18 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
   const [loading, setLoading] = useState(true);
   const copy = COPY[direction];
 
-  useEffect(() => setPage(1), [direction, sortColumn, sortDir]);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => setPage(1), [direction, debouncedSearch, sortColumn, sortDir]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     api
-      .billsDue(direction, { sortBy: sortColumn, sortDir, page, pageSize: PAGE_SIZE })
+      .billsDue(direction, { search: debouncedSearch, sortBy: sortColumn, sortDir, page, pageSize: PAGE_SIZE })
       .then((envelope) => {
         if (cancelled) return;
         setRows(envelope.data);
@@ -51,15 +58,19 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
     return () => {
       cancelled = true;
     };
-  }, [direction, sortColumn, sortDir, page, tick]);
+  }, [direction, debouncedSearch, sortColumn, sortDir, page, tick]);
 
   async function handleExport() {
     if (total === 0) return;
-    const envelope = await api.billsDue(direction, { sortBy: sortColumn, sortDir, page: 1, pageSize: 100000 });
+    const envelope = await api.billsDue(direction, {
+      search: debouncedSearch, sortBy: sortColumn, sortDir, page: 1, pageSize: 100000,
+    });
     downloadCsv(
       `${direction}-${new Date().toISOString().slice(0, 10)}.csv`,
-      [copy.entityLabel, "Bill Ref", "Bill Date", "Due Date", "Days Until Due", "Amount Outstanding"],
-      envelope.data.map((r) => [r.entity_name, r.bill_ref, r.bill_date, r.due_date, r.days_until_due, r.amount_outstanding]),
+      [copy.entityLabel, "Bill Ref", "Details", "Bill Date", "Due Date", "Days Until Due", "Amount Outstanding"],
+      envelope.data.map((r) => [
+        r.entity_name, r.bill_ref, r.narration, r.bill_date, r.due_date, r.days_until_due, r.amount_outstanding,
+      ]),
     );
     showToast(`Exported ${envelope.data.length} rows`);
   }
@@ -74,6 +85,13 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
           <p className="panel-sub">{copy.subtitle} — click a column to sort</p>
         </div>
         <div className="panel-controls">
+          <input
+            className="search-input"
+            type="search"
+            placeholder={`Search ${copy.entityLabel.toLowerCase()} or bill ref…`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <span className="pager-info">
             {total} bills · {fmtMoney(totalAmount)} total
             {overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
@@ -89,6 +107,7 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
             <tr>
               <SortableHeader column="entity_name" label={copy.entityLabel} {...headerProps} />
               <SortableHeader column="bill_ref" label="Bill Ref" {...headerProps} />
+              <th>Details</th>
               <SortableHeader column="bill_date" label="Bill Date" {...headerProps} />
               <SortableHeader column="due" label="Status" {...headerProps} />
               <SortableHeader column="amount" label="Amount" numeric {...headerProps} />
@@ -97,7 +116,9 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
           <tbody>
             {rows.length === 0 ? (
               <tr className="empty-row">
-                <td colSpan={5}>{loading ? "Loading…" : `No open ${direction} bills.`}</td>
+                <td colSpan={6}>
+                  {loading ? "Loading…" : debouncedSearch ? "No bills match your search." : `No open ${direction} bills.`}
+                </td>
               </tr>
             ) : (
               rows.map((r) => (
@@ -110,6 +131,9 @@ export default function DueListView({ direction, tick, onOpenEntity }) {
                     {r.entity_name}
                   </td>
                   <td>{r.bill_ref || "—"}</td>
+                  <td className="truncate" title={r.narration || ""}>
+                    {r.narration || "—"}
+                  </td>
                   <td>{r.bill_date || "—"}</td>
                   <td>
                     <span className={"due-badge " + dueTone(r.days_until_due)}>{dueLabel(r.days_until_due)}</span>

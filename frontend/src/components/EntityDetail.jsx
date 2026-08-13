@@ -127,6 +127,7 @@ export default function EntityDetail({ entityId, onClose }) {
               <thead>
                 <tr>
                   <th>Ref</th>
+                  <th>Details</th>
                   <th>Date</th>
                   <th>Due</th>
                   <th className="num">Outstanding</th>
@@ -136,12 +137,15 @@ export default function EntityDetail({ entityId, onClose }) {
               <tbody>
                 {bills.length === 0 ? (
                   <tr className="empty-row">
-                    <td colSpan={5}>No bills.</td>
+                    <td colSpan={6}>No bills.</td>
                   </tr>
                 ) : (
                   bills.map((b) => (
                     <tr key={b.bill_ref} className={b.status === "overdue" ? "row-overdue" : ""}>
                       <td>{b.bill_ref}</td>
+                      <td className="truncate" title={b.narration || ""}>
+                        {b.narration || "—"}
+                      </td>
                       <td>{b.bill_date || "—"}</td>
                       <td>{b.due_date || "—"}</td>
                       <td className="num">{fmtMoney(b.amount_outstanding)}</td>

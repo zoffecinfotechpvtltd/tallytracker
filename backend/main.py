@@ -247,7 +247,7 @@ def get_entity_detail(entity_id: int):
         bills = [{
             "bill_ref": b["bill_ref"], "bill_date": b["bill_date"], "due_date": b["due_date"],
             "original_amount": b["original_amount"], "amount_outstanding": b["amount_outstanding"],
-            "status": b["status"],
+            "status": b["status"], "narration": b["narration"],
         } for b in db.list_bills_for_entity(conn, entity_id)]
 
         history_rows = conn.execute(
@@ -379,7 +379,7 @@ _BILLS_DUE_SORT_KEYS = {
 
 @app.get("/api/bills-due")
 def get_bills_due(
-    direction: str, sort_by: str = "due", sort_dir: str = "asc",
+    direction: str, search: Optional[str] = None, sort_by: str = "due", sort_dir: str = "asc",
     page: int = 1, page_size: int = 50,
 ):
     if direction not in _DIRECTION_TO_ENTITY_TYPE:
@@ -397,8 +397,15 @@ def get_bills_due(
                 "entity_id": r["entity_id"], "entity_name": r["entity_name"],
                 "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "due_date": r["due_date"],
                 "amount_outstanding": r["amount_outstanding"], "status": r["status"],
-                "days_until_due": days_until_due,
+                "days_until_due": days_until_due, "narration": r["narration"],
             })
+
+        if search:
+            needle = search.strip().lower()
+            items = [
+                i for i in items
+                if needle in (i["entity_name"] or "").lower() or needle in (i["bill_ref"] or "").lower()
+            ]
 
         key_fn = _BILLS_DUE_SORT_KEYS.get(sort_by, _BILLS_DUE_SORT_KEYS["due"])
         items.sort(key=key_fn, reverse=(sort_dir == "desc"))

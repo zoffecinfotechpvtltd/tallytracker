@@ -156,6 +156,9 @@ def connect(db_path: str) -> sqlite3.Connection:
 # expects, with no manual ALTER TABLE required.
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "baseline schema", SCHEMA),
+    (2, "add bills.narration - what a bill was actually for, from the voucher", """
+        ALTER TABLE bills ADD COLUMN narration TEXT;
+    """),
 ]
 
 
@@ -304,14 +307,15 @@ def upsert_bill(
     status: str,
     match_confidence: str,
     seen_at: Optional[str] = None,
+    narration: Optional[str] = None,
 ) -> sqlite3.Row:
     seen_at = seen_at or now_iso()
     row = conn.execute(
         """
         INSERT INTO bills (
             entity_id, bill_ref, bill_date, due_date, original_amount,
-            amount_outstanding, status, match_confidence, first_seen_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            amount_outstanding, status, match_confidence, first_seen_at, last_seen_at, narration
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(entity_id, bill_ref) DO UPDATE SET
             bill_date = excluded.bill_date,
             due_date = excluded.due_date,
@@ -319,11 +323,12 @@ def upsert_bill(
             amount_outstanding = excluded.amount_outstanding,
             status = excluded.status,
             match_confidence = excluded.match_confidence,
-            last_seen_at = excluded.last_seen_at
+            last_seen_at = excluded.last_seen_at,
+            narration = excluded.narration
         RETURNING *
         """,
         (entity_id, bill_ref, bill_date, due_date, original_amount, amount_outstanding,
-         status, match_confidence, seen_at, seen_at),
+         status, match_confidence, seen_at, seen_at, narration),
     ).fetchone()
     return row
 

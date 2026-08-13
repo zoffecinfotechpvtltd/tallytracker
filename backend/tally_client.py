@@ -380,7 +380,7 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
     req = _adhoc_collection_request(
         "TTVoucherBillsX2", "Voucher",
         [
-            "DATE",
+            "DATE", "VOUCHERTYPENAME", "NARRATION",
             "ALLLEDGERENTRIES.LEDGERNAME",
             "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
             "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
@@ -399,6 +399,11 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
     bills: dict[tuple[str, str], dict] = {}
     for v in root.iter("VOUCHER"):
         v_date = _parse_tally_date(_first_text(v, "DATE"))
+        # NARRATION is often blank; fall back to the voucher type + number so
+        # there's still something to show ("what is this bill for") even when
+        # nobody typed a note - e.g. "Purchase ZOFFEC/055/26-27".
+        v_type = _first_text(v, "VOUCHERTYPENAME") or ""
+        v_narration = _first_text(v, "NARRATION") or ""
         for entry in v.findall("ALLLEDGERENTRIES.LIST"):
             ledger_name = _first_text(entry, "LEDGERNAME")
             if not ledger_name:
@@ -409,11 +414,12 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
                     continue
                 amount = _parse_amount(_first_text(bill, "AMOUNT"))
                 key = (ledger_name, bill_ref)
-                rec = bills.setdefault(key, {"bill_date": None, "net_amount": 0.0})
+                rec = bills.setdefault(key, {"bill_date": None, "net_amount": 0.0, "narration": ""})
                 rec["net_amount"] += amount
                 bill_type = _first_text(bill, "BILLTYPE") or ""
                 if bill_type == "New Ref" or rec["bill_date"] is None:
                     rec["bill_date"] = v_date
+                    rec["narration"] = v_narration or v_type
     _voucher_bills_cache["ts"] = time.time()
     _voucher_bills_cache["data"] = bills
     return bills
@@ -465,6 +471,10 @@ def _fetch_bills(group_name: str) -> list[dict]:
                 "due_date": due_date,
                 "original_amount": abs(original),
                 "amount_outstanding": abs(original),
+                # No voucher to read a narration from - these are carried-
+                # forward opening balances, not tied to an actual voucher in
+                # this company's own data.
+                "narration": "",
             })
             seen_refs.add((ledger_name, bill_ref))
 
@@ -472,15 +482,29 @@ def _fetch_bills(group_name: str) -> list[dict]:
     # (pre-split/pre-company-start carried-forward bills). Anything raised via
     # an actual voucher - which, for most installs, is every currently active
     # bill - has to come from scanning vouchers directly instead.
-    group_ledgers = _fetch_group_ledger_names(group_name)
+    #
+    # Classify each voucher-derived bill by the SIGN of its own net amount
+    # (Tally convention, same as _balance_type_from_signed_value: positive =
+    # Dr = they owe us = receivable, negative = Cr = we owe them = payable),
+    # not by which chart-of-accounts group its ledger happens to be parented
+    # under. Confirmed against real data that the same ledger can carry both
+    # directions - a party used historically as a vendor (old purchase bills,
+    # parented under Sundry Creditors) that's since also been sold to (a new
+    # Sales invoice, which is receivable regardless of the ledger's own
+    # group). Scoped to ledgers under EITHER group so a bill isn't dropped
+    # just because its ledger's nominal parent doesn't match this direction.
+    party_ledgers = _fetch_group_ledger_names(PAYABLE_GROUP) | _fetch_group_ledger_names(RECEIVABLE_GROUP)
+    wants_positive = group_name == RECEIVABLE_GROUP
     for (ledger_name, bill_ref), rec in _fetch_bill_refs_from_vouchers().items():
-        if ledger_name not in group_ledgers:
+        if ledger_name not in party_ledgers:
             continue
         if (ledger_name, bill_ref) in seen_refs:
             continue  # already have this one from the ledger-master pass
         net = rec["net_amount"]
         if abs(net) < 0.5:
             continue  # fully settled (new bill + its payment(s) net to ~0) - not open
+        if (net > 0) != wants_positive:
+            continue  # belongs to the other direction, not this one
         bill_date = rec["bill_date"]
         due_date = (
             bill_date + timedelta(days=settings.billing.default_credit_days)
@@ -493,6 +517,7 @@ def _fetch_bills(group_name: str) -> list[dict]:
             "due_date": due_date,
             "original_amount": abs(net),
             "amount_outstanding": abs(net),
+            "narration": rec.get("narration") or "",
         })
     return results
 

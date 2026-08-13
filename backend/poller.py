@@ -93,6 +93,7 @@ def resolve_bill(conn: sqlite3.Connection, poll_ts: str, entity_id: int, raw_bil
         conn, entity_id, bill_ref,
         _iso_or_none(raw_bill.get("bill_date")), _iso_or_none(due_date),
         raw_bill.get("original_amount"), outstanding, status, confidence, seen_at=poll_ts,
+        narration=raw_bill.get("narration") or None,
     )
 
 

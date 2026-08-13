@@ -69,6 +69,21 @@ def test_bill_upsert_dedupes_on_entity_and_ref(conn):
     assert bill_count == 1
 
 
+def test_bill_narration_stored_and_updated(conn):
+    e1 = db.upsert_entity(conn, "ABC Traders", "customer", 1000.0, "Dr")
+    b1 = db.upsert_bill(
+        conn, e1["id"], "INV-001", "2026-01-01", "2026-02-01", 5000.0, 5000.0, "open", "high",
+        narration="Sale of 10 units Widget A",
+    )
+    assert b1["narration"] == "Sale of 10 units Widget A"
+
+    b2 = db.upsert_bill(
+        conn, e1["id"], "INV-001", "2026-01-01", "2026-02-01", 5000.0, 3000.0, "open", "high",
+        narration="Sale of 10 units Widget A (revised)",
+    )
+    assert b2["narration"] == "Sale of 10 units Widget A (revised)"
+
+
 def test_stock_item_upsert_dedupes_on_normalized_name(conn):
     s1 = db.upsert_stock_item(conn, "Widget A", 100, "pcs", 10000.0)
     s2 = db.upsert_stock_item(conn, "Widget A", 90, "pcs", 9000.0)

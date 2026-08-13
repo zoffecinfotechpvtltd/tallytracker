@@ -43,9 +43,10 @@ export const api = {
     return request("/api/stock?" + params.toString());
   },
 
-  billsDue: (direction, { sortBy = "due", sortDir = "asc", page = 1, pageSize = 50 } = {}) => {
+  billsDue: (direction, { search = "", sortBy = "due", sortDir = "asc", page = 1, pageSize = 50 } = {}) => {
     const params = new URLSearchParams();
     params.set("direction", direction);
+    if (search) params.set("search", search);
     params.set("sort_by", sortBy);
     params.set("sort_dir", sortDir);
     params.set("page", String(page));
