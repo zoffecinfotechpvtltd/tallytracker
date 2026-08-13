@@ -380,7 +380,7 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
     req = _adhoc_collection_request(
         "TTVoucherBillsX2", "Voucher",
         [
-            "DATE", "VOUCHERTYPENAME", "NARRATION",
+            "DATE", "VOUCHERTYPENAME", "NARRATION", "ISCANCELLED", "ISOPTIONAL",
             "ALLLEDGERENTRIES.LEDGERNAME",
             "ALLLEDGERENTRIES.BILLALLOCATIONS.NAME",
             "ALLLEDGERENTRIES.BILLALLOCATIONS.BILLTYPE",
@@ -398,6 +398,14 @@ def _fetch_bill_refs_from_vouchers() -> dict[tuple[str, str], dict]:
 
     bills: dict[tuple[str, str], dict] = {}
     for v in root.iter("VOUCHER"):
+        # Cancelled/optional vouchers aren't real transactions - Tally's own
+        # Outstanding report excludes them too, so counting their bill
+        # allocations here would inflate totals with amounts that were never
+        # actually billed.
+        if (_first_text(v, "ISCANCELLED") or "").strip().lower() == "yes":
+            continue
+        if (_first_text(v, "ISOPTIONAL") or "").strip().lower() == "yes":
+            continue
         v_date = _parse_tally_date(_first_text(v, "DATE"))
         # NARRATION is often blank; fall back to the voucher type + number so
         # there's still something to show ("what is this bill for") even when
@@ -483,18 +491,21 @@ def _fetch_bills(group_name: str) -> list[dict]:
     # an actual voucher - which, for most installs, is every currently active
     # bill - has to come from scanning vouchers directly instead.
     #
-    # Classify each voucher-derived bill by the SIGN of its own net amount
-    # (Tally convention, same as _balance_type_from_signed_value: positive =
-    # Dr = they owe us = receivable, negative = Cr = we owe them = payable),
+    # Classify each voucher-derived bill by the SIGN of its own net amount,
     # not by which chart-of-accounts group its ledger happens to be parented
-    # under. Confirmed against real data that the same ledger can carry both
-    # directions - a party used historically as a vendor (old purchase bills,
-    # parented under Sundry Creditors) that's since also been sold to (a new
-    # Sales invoice, which is receivable regardless of the ledger's own
-    # group). Scoped to ledgers under EITHER group so a bill isn't dropped
-    # just because its ledger's nominal parent doesn't match this direction.
+    # under - confirmed against real data that the same ledger can carry both
+    # directions (a party used historically as a vendor, parented under
+    # Sundry Creditors, that's since also been sold to). Per-voucher
+    # ALLLEDGERENTRIES amounts follow the OPPOSITE sign convention from a
+    # ledger's overall CLOSINGBALANCE (_balance_type_from_signed_value):
+    # confirmed against real data that Purchase-side (payable) entries come
+    # back positive and Sales-side (receivable) entries come back negative
+    # here - do not "fix" this to match that other convention without
+    # re-confirming against real data first. Scoped to ledgers under EITHER
+    # group so a bill isn't dropped just because its ledger's nominal parent
+    # doesn't match this direction.
     party_ledgers = _fetch_group_ledger_names(PAYABLE_GROUP) | _fetch_group_ledger_names(RECEIVABLE_GROUP)
-    wants_positive = group_name == RECEIVABLE_GROUP
+    wants_positive = group_name == PAYABLE_GROUP
     for (ledger_name, bill_ref), rec in _fetch_bill_refs_from_vouchers().items():
         if ledger_name not in party_ledgers:
             continue
